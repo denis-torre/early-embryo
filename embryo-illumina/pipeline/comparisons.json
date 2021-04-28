@@ -1,0 +1,16 @@
+{
+	"human": [
+		["1C", "2C"],
+		["2C", "4C"],
+		["4C", "8C"],
+		["8C", "morula"],
+		["morula", "blastocyst"],
+		["8C", "blastocyst"]
+	],
+	"mouse": [
+		["1C", "2C"],
+		["2C", "4C"],
+		["4C", "8C"],
+		["8C", "blastocyst"]
+	]
+}
