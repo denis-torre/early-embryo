@@ -1,0 +1,9 @@
+arion
+.RData
+logs
+notebooks
+data-download
+embryo-illumina
+settings.json
+*.sqlite
+*.pyc
