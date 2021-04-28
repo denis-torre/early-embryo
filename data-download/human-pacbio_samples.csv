@@ -1,0 +1,11 @@
+sample_id,Group
+TD01042_1PN,2PN
+TD01042_4PN,2PN
+TD01042_EMB1,2PN
+TD01042_EMB2,2cell
+TD01042_EMB3,4cell
+TD01042_EMB4,4cell
+TD01042_EMB5,8cell
+TD01042_EMB6,blastocyst
+TD01042_MOR,morula
+TD01673_all_embryos_merged,merged

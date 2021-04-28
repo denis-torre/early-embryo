@@ -2,7 +2,6 @@ arion
 .RData
 logs
 notebooks
-data-download
 settings.json
 *.sqlite
 *.pyc
