@@ -101,6 +101,7 @@ reference_dict = {
 		'isoseq': {
 			'genome_fasta': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa',
 			'gtf': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.gtf',
+			'gtf_junctions': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_junctions.tsv',
 			'transcript_fasta': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.fasta',
 			'summary_file': 'arion/isoseq/summary.dir/human-isoseq_summary.tsv',
 			'cpat_predictions': 'arion/isoseq/s06-cpat.dir/human/Homo_sapiens.GRCh38.102_talon-cpat.ORF_prob.best_results.tsv',
@@ -117,6 +118,7 @@ reference_dict = {
 		'isoseq': {
 			'genome_fasta': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.dna_sm.primary_assembly.fa',
 			'gtf': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon.gtf',
+			'gtf_junctions': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon_junctions.tsv',
 			'transcript_fasta': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon.fasta',
 			'summary_file': 'arion/isoseq/summary.dir/mouse-isoseq_summary.tsv',
 			'cpat_predictions': 'arion/isoseq/s06-cpat.dir/mouse/Mus_musculus.GRCm38.102_talon-cpat.ORF_prob.best_results.tsv',
@@ -369,7 +371,6 @@ def starJobs():
 		fastq_dict = sample_dataframe.drop('organism', axis=1).set_index('sample_name')['fastq'].to_dict()
 		for sample_name, fastq_files in fastq_dict.items():
 			for source in ['isoseq']:
-			# for source in ['isoseq', 'ensembl']:
 				star_index = 'arion/illumina/s03-indices.dir/{organism}/{source}/STAR'.format(**locals())
 				sj_files = glob.glob('arion/illumina/s04-alignment.dir/{organism}/{source}/STAR/pass1/*/*-SJ.out.tab'.format(**locals()))
 				outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/STAR/pass2/{sample_name}/{sample_name}-Aligned.sortedByCoord.out.bam'.format(**locals())
@@ -405,22 +406,25 @@ def runStar(infiles, outfile):
 # ls arion/illumina/s04-alignment.dir/*/*/STAR/pass2/*/*Aligned.sortedByCoord.out.log | jsc
 
 #############################################
-########## Junction counts
+########## 3. Junction counts
 #############################################
 
 def sjCountJobs():
 	for organism, organism_references in reference_dict.items():
 		for source, reference_files in organism_references.items():
 			if source == 'isoseq':
-				infiles = [reference_files['gtf']] + glob.glob('arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/pass2/*/*-SJ.out.tab'.format(**locals()))
-				outfile = 'arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/pass2/{organism}-SJ_summary.tsv'.format(**locals())
+				infiles = [reference_files['gtf_junctions']] + glob.glob('arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/pass2/*/*-SJ.out.tab'.format(**locals()))
+				outfile = 'arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/{organism}-junction_counts.tsv'.format(**locals())
 				yield [infiles, outfile]
 
 @files(sjCountJobs)
 
-def getSjSummary(infiles, outfile):
-	print(infiles, outfile)
+def getJunctionCounts(infiles, outfile):
 
+	# Run
+	run_r_job('get_junction_counts', infiles, outfile, run_locally=False, W='00:30', GB=75, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# ls arion/illumina/s04-alignment.dir/*/isoseq/STAR/*-junction_counts* | xargs rm
 
 #############################################
 ########## 3. Salmon
