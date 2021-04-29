@@ -779,6 +779,32 @@ def getTalonSummary(infiles, outfile):
 	# Write
 	result_dataframe.to_csv(outfile, sep='\t', index=False)
 
+#############################################
+########## 8. Get SJs
+#############################################
+
+# @transform(getTalonGTF,
+@transform('arion/isoseq/s05-talon.dir/*/*.gtf',
+		   regex(r'(.*)/(.*)/(.*).gtf'),
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.gtf'),
+		   r'\1/\2/\3_introns.tsv')
+
+def getSJs(infiles, outfile):
+
+	# Get prefix
+	prefix = outfile[:-len('_introns.tsv')]
+
+	# Command
+	cmd_str = ''' talon_get_sjs \
+		--gtf {infiles[0]} \
+		--ref {infiles[1]} \
+		--mode intron \
+		--outprefix {prefix} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, W='30:00', n=1, GB=25, conda_env='talon', print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+	# run_job(cmd_str, outfile, modules=['gff/2021-02'], W='00:30', GB=10, n=1, stdout=outfile.replace('.fasta', '_fasta.log'), stderr=outfile.replace('.fasta', '_fasta.err'))
+
 #######################################################
 #######################################################
 ########## S6. CPAT

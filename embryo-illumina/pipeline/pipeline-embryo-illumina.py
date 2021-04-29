@@ -405,6 +405,24 @@ def runStar(infiles, outfile):
 # ls arion/illumina/s04-alignment.dir/*/*/STAR/pass2/*/*Aligned.sortedByCoord.out.log | jsc
 
 #############################################
+########## Junction counts
+#############################################
+
+def sjCountJobs():
+	for organism, organism_references in reference_dict.items():
+		for source, reference_files in organism_references.items():
+			if source == 'isoseq':
+				infiles = [reference_files['gtf']] + glob.glob('arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/pass2/*/*-SJ.out.tab'.format(**locals()))
+				outfile = 'arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/pass2/{organism}-SJ_summary.tsv'.format(**locals())
+				yield [infiles, outfile]
+
+@files(sjCountJobs)
+
+def getSjSummary(infiles, outfile):
+	print(infiles, outfile)
+
+
+#############################################
 ########## 3. Salmon
 #############################################
 
