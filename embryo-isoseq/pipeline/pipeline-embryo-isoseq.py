@@ -786,24 +786,14 @@ def getTalonSummary(infiles, outfile):
 # @transform(getTalonGTF,
 @transform('arion/isoseq/s05-talon.dir/*/*.gtf',
 		   regex(r'(.*)/(.*)/(.*).gtf'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*.gtf'),
-		   r'\1/\2/\3_introns.tsv')
+		   r'\1/\2/\3_junctions.tsv')
 
-def getSJs(infiles, outfile):
-
-	# Get prefix
-	prefix = outfile[:-len('_introns.tsv')]
-
-	# Command
-	cmd_str = ''' talon_get_sjs \
-		--gtf {infiles[0]} \
-		--ref {infiles[1]} \
-		--mode intron \
-		--outprefix {prefix} '''.format(**locals())
+def getJunctions(infile, outfile):
 
 	# Run
-	run_job(cmd_str, outfile, W='30:00', n=1, GB=25, conda_env='talon', print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
-	# run_job(cmd_str, outfile, modules=['gff/2021-02'], W='00:30', GB=10, n=1, stdout=outfile.replace('.fasta', '_fasta.log'), stderr=outfile.replace('.fasta', '_fasta.err'))
+	run_r_job('get_junctions', infile, outfile, conda_env='env', W='06:00', GB=5, n=6, run_locally=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# find arion/isoseq/s05-talon.dir -name "*junctions*" | xargs rm
 
 #######################################################
 #######################################################

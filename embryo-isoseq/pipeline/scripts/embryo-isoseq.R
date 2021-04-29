@@ -285,6 +285,62 @@ merge_sjs <- function(infiles, outfile) {
 
 #######################################################
 #######################################################
+########## S5. TALON
+#######################################################
+#######################################################
+
+#############################################
+########## 8. Get SJs
+#############################################
+
+get_junctions <- function(infile, outfile) {
+    
+    # Library
+    require(parallel)
+
+    # Read GTF
+    gtf <- rtracklayer::readGFF(infile) %>% select(-source) %>% filter(type=='exon')# %>% head(500)# %>% select(gene_id, transcript_id, seqid, start, end)
+
+    # Get multiexonic transcripts
+    exon_counts <- table(gtf$transcript_id)
+    multiexon_transcripts <- names(exon_counts)[exon_counts > 1]
+
+    # Filter
+    gtf_filtered <- gtf %>% filter(transcript_id %in% multiexon_transcripts)
+
+    # Split
+    gtf_split <- split(gtf_filtered, gtf_filtered$transcript_id)
+
+    # Get cores
+    cores <- 30
+
+    # Make cluster
+    cluster <- makeCluster(cores)
+
+    # Load libraries
+    clusterEvalQ(cluster, library("dplyr"));
+
+    # Loop
+    junction_dataframe <- parSapply(cluster, gtf_split, function(x) {
+        
+        # Get GTF
+        transcript_gtf <- x %>% arrange(start) %>% select(gene_id, transcript_id, exon_id, seqid, start, end, strand)
+        
+        # Get strand
+        strand <- unique(transcript_gtf$strand)
+        
+        # Get junctions
+        junctions <- transcript_gtf %>% group_by(gene_id, transcript_id, seqid, strand) %>% mutate(junction_start=end, junction_end=lead(start), exon_ids=paste0(exon_id, '-', lead(exon_id))) %>% ungroup %>% head(-1) %>% select(gene_id, transcript_id, exon_ids, seqid, junction_start, junction_end, strand)
+        
+    }, simplify=FALSE) %>% bind_rows
+
+    # Write
+    fwrite(junction_dataframe, outfile, sep='\t')#, compress='gzip')
+
+}
+
+#######################################################
+#######################################################
 ########## S6. CPAT
 #######################################################
 #######################################################
