@@ -93,11 +93,11 @@ trimmed_illumina_fastq = glob.glob('arion/illumina/s01-fastq.dir/*/trimmed/*/*.f
 # References
 reference_dict = {
 	'human': {
-		'ensembl': {
-			'genome_fasta': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa',
-			'gtf': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.102.gtf',
-			'transcript_fasta': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.cdna.all.fa'
-		},
+		# 'ensembl': {
+		# 	'genome_fasta': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa',
+		# 	'gtf': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.102.gtf',
+		# 	'transcript_fasta': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.cdna.all.fa'
+		# },
 		'isoseq': {
 			'genome_fasta': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa',
 			'gtf': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.gtf',
@@ -110,11 +110,11 @@ reference_dict = {
 		}
 	},
 	'mouse': {
-		'ensembl': {
-			'genome_fasta': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.dna_sm.primary_assembly.fa',
-			'gtf': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.102.gtf',
-			'transcript_fasta': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.cdna.all.fa'
-		},
+		# 'ensembl': {
+		# 	'genome_fasta': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.dna_sm.primary_assembly.fa',
+		# 	'gtf': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.102.gtf',
+		# 	'transcript_fasta': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.cdna.all.fa'
+		# },
 		'isoseq': {
 			'genome_fasta': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.dna_sm.primary_assembly.fa',
 			'gtf': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon.gtf',
@@ -329,7 +329,7 @@ def starJunctionJobs():
 	for organism, sample_dataframe in fastq_dataframe.groupby('organism'):
 		fastq_dict = sample_dataframe.drop('organism', axis=1).set_index('sample_name')['fastq'].to_dict()
 		for sample_name, fastq_files in fastq_dict.items():
-			for source in ['isoseq', 'ensembl']:
+			for source in ['isoseq']:
 				star_index = 'arion/illumina/s03-indices.dir/{organism}/{source}/STAR'.format(**locals())
 				outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/STAR/pass1/{sample_name}/{sample_name}-SJ.out.tab'.format(**locals())
 				yield [(fastq_files, star_index), outfile]
@@ -412,19 +412,59 @@ def runStar(infiles, outfile):
 def sjCountJobs():
 	for organism, organism_references in reference_dict.items():
 		for source, reference_files in organism_references.items():
-			if source == 'isoseq':
-				infiles = [reference_files['gtf_junctions']] + glob.glob('arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/pass2/*/*-SJ.out.tab'.format(**locals()))
-				outfile = 'arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/{organism}-junction_counts.tsv'.format(**locals())
-				yield [infiles, outfile]
+			infiles = [reference_files['gtf_junctions']] + glob.glob('arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/pass2/*/*-SJ.out.tab'.format(**locals()))
+			outfile = 'arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/{organism}-{source}-junction_counts.tsv'.format(**locals())
+			yield [infiles, outfile]
 
 @files(sjCountJobs)
 
 def getJunctionCounts(infiles, outfile):
 
 	# Run
-	run_r_job('get_junction_counts', infiles, outfile, run_locally=False, W='00:30', GB=75, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+	run_r_job('get_junction_counts', infiles, outfile, run_locally=False, W='02:00', GB=50, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
-# ls arion/illumina/s04-alignment.dir/*/isoseq/STAR/*-junction_counts* | xargs rm
+#############################################
+########## 4. Filter GTF
+#############################################
+
+def filterJobs():
+	for organism, comparisons in comparison_dict.items():
+		for source, reference_files in reference_dict[organism].items():
+			gtf = reference_files['gtf']
+			infiles = [gtf, 'arion/illumina/s04-alignment.dir/{organism}/{source}/STAR/{organism}-{source}_junction_counts.tsv'.format(**locals())]
+			for comparison in comparisons+['all']:
+				gtf_prefix = os.path.basename(gtf)[:-len('.gtf')]
+				comparison_string = '_vs_'.join(comparison) if comparison != 'all' else comparison
+				outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/RSEM/{comparison_string}/gtf/{gtf_prefix}-{comparison_string}-SJ_filtered.gtf'.format(**locals())
+				yield [infiles, outfile, comparison]
+
+# @follows(functionToFollow)
+
+@files(filterJobs)
+
+def filterGTF(infiles, outfile, comparison):
+
+	# Run
+	run_r_job('filter_gtf', infiles, outfile, additional_params=comparison, run_locally=False, W='00:30', GB=25, n=1, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))
+
+#############################################
+########## 5. Create RSEM reference
+#############################################
+
+@transform('arion/illumina/s04-alignment.dir/mouse/isoseq/RSEM/1C_vs_2C/gtf/Mus_musculus.GRCm38.102_talon-1C_vs_2C-SJ_filtered.gtf',
+# @transform(filterGTF,
+		   regex(r'(arion)/(.*.dir)/(.*?)/(.*)/gtf/(.*).gtf'),
+		   add_inputs(r'\1/datasets/reference_genomes/\3/*.dna_sm.primary_assembly.fa'),
+		   r'\1/\2/\3/\4/index_v2/\5')
+
+def createRsemReference(infiles, outfile):
+
+	# Command
+	basename = outfile
+	cmd_str = ''' rsem-prepare-reference --gtf {infiles[0]} --num-threads 5 {infiles[1]} {basename} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, W="06:00", GB=10, n=5, modules=['rsem/1.3.3'], print_cmd=False)#, stdout=os.path.join(basename, '_job.log'), stderr=os.path.join(basename, '_job.err'))
 
 #############################################
 ########## 3. Salmon
@@ -703,14 +743,13 @@ def groupBams(infiles, outfile):
 def rmatsJobs():
 	for organism, comparisons in comparison_dict.items():
 		for source, reference_files in reference_dict[organism].items():
-			if source == 'isoseq':
-				for comparison in comparisons:
-					infiles = []
-					for cell_type in comparison:
-						infiles.append('arion/illumina/s07-rmats.dir/{organism}/{source}/bams/{organism}_{source}-{cell_type}-bams.txt'.format(**locals()))
-					infiles.append(reference_files['gtf'])
-					outfile = 'arion/illumina/s07-rmats.dir/{organism}/{source}/results/{organism}_{source}-{comparison[0]}_vs_{comparison[1]}'.format(**locals())
-					yield [infiles, outfile]
+			for comparison in comparisons:
+				infiles = []
+				for cell_type in comparison:
+					infiles.append('arion/illumina/s07-rmats.dir/{organism}/{source}/bams/{organism}_{source}-{cell_type}-bams.txt'.format(**locals()))
+				infiles.append(reference_files['gtf'])
+				outfile = 'arion/illumina/s07-rmats.dir/{organism}/{source}/results/{organism}_{source}-{comparison[0]}_vs_{comparison[1]}'.format(**locals())
+				yield [infiles, outfile]
 
 # @follows(runStar)
 

@@ -41,6 +41,7 @@ get_junction_counts <- function(infiles, outfile) {
         
         # Merge to introns
         merged_dataframe <- junction_dataframe %>% left_join(sj_dataframe, by=c('chrom', 'junction_start', 'junction_end', 'strand')) %>% replace_na(list(uniquely_mapped_reads=0, multimapping_reads=0)) %>% mutate(sample=gsub('.*/(.*)/.*', '\\1', x))
+
     }) %>% bind_rows
 
     # Count
@@ -55,6 +56,38 @@ get_junction_counts <- function(infiles, outfile) {
 
     # Write
     fwrite(summary_dataframe, file=outfile, sep='\t')
+
+}
+
+#############################################
+########## 4. Filter GTF
+#############################################
+
+filter_gtf <- function(infiles, outfile, comparison) {
+    
+    # Read GTF
+    gtf <- rtracklayer::import(infiles[1])
+
+    # Read junctions
+    jc_dataframe <- fread(infiles[2]) %>% mutate(cell_type=gsub('.*?_(.*?)_.*', '\\1', sample))
+
+    # Filter samples
+    if (comparison != 'all') {
+        jc_dataframe <- jc_dataframe %>% filter(cell_type %in% comparison)
+    }
+
+    # Collapse counts
+    count_dataframe <- jc_dataframe %>% group_by(transcript_id) %>% summarize(max_min_unique_sj=max(min_unique_sj), max_min_multi_sj=max(min_multi_sj))
+
+    # Get transcripts
+    min_sj <- ifelse(grepl('human', outfile), 3, 1)
+    filtered_transcripts <- count_dataframe %>% filter(max_min_unique_sj >= min_sj) %>% pull(transcript_id)
+
+    # Filter GTF
+    gtf_filtered <- gtf[gtf$transcript_id %in% filtered_transcripts,]
+
+    # Export
+    rtracklayer::export(gtf_filtered, outfile, format='gtf')
 
 }
 
