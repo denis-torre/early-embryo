@@ -312,7 +312,7 @@ get_junctions <- function(infile, outfile) {
     gtf_split <- split(gtf_filtered, gtf_filtered$transcript_id)
 
     # Get cores
-    cores <- 30
+    cores <- 10
 
     # Make cluster
     cluster <- makeCluster(cores)

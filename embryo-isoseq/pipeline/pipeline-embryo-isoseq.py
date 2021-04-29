@@ -791,9 +791,9 @@ def getTalonSummary(infiles, outfile):
 def getJunctions(infile, outfile):
 
 	# Run
-	run_r_job('get_junctions', infile, outfile, conda_env='env', W='06:00', GB=5, n=6, run_locally=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+	run_r_job('get_junctions', infile, outfile, conda_env='env', W='02:00', GB=20, n=5, run_locally=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
-# find arion/isoseq/s05-talon.dir -name "*junctions*" | xargs rm
+# find arion/isoseq/s05-talon.dir -name "*junctions.*" | xargs rm
 
 #######################################################
 #######################################################
