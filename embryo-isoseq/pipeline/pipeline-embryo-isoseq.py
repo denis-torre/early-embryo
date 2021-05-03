@@ -793,6 +793,37 @@ def getJunctions(infile, outfile):
 	# Run
 	run_r_job('get_junctions', infile, outfile, conda_env='env', W='02:00', GB=20, n=5, run_locally=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
+#############################################
+########## 9. Get abundance
+#############################################
+
+# @follows(filterTranscripts)
+
+@transform('arion/isoseq/s05-talon.dir/*/*.102_talon.db',
+		   regex(r'(.*)/(.*).db'),
+		   add_inputs(r'\1/\2_filtered_transcripts.tsv'),
+		   r'\1/\2_abundance_filtered.tsv')
+
+def getTalonAbundance(infiles, outfile):
+	
+	# Get parameters
+	annotation_name = os.path.basename(infiles[0])[:-len('.db')]
+	genome_build = annotation_name.split('.')[1].replace('GRCm38', 'mm10').replace('GRCh38', 'hg38')
+	prefix = outfile[:-len('_talon_abundance_filtered.tsv')]
+
+	# Command
+	cmd_str = ''' talon_abundance \
+		--db {infiles[0]} \
+		--annot {annotation_name} \
+		--build {genome_build} \
+		--whitelist {infiles[1]} \
+		--o {prefix} '''.format(**locals())
+		# --observed \
+
+	# Run
+	run_job(cmd_str, outfile, W='01:00', n=1, GB=25, conda_env='talon', print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+
 # find arion/isoseq/s05-talon.dir -name "*junctions.*" | xargs rm
 
 #######################################################
