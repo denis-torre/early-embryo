@@ -18,7 +18,7 @@ suppressPackageStartupMessages(require(tidyr))
 
 #######################################################
 #######################################################
-########## S4. Alignment
+########## S3. Splice junctions
 #######################################################
 #######################################################
 
@@ -59,8 +59,14 @@ get_junction_counts <- function(infiles, outfile) {
 
 }
 
+#######################################################
+#######################################################
+########## S4. Alignment
+#######################################################
+#######################################################
+
 #############################################
-########## 4. Filter GTF
+########## 1. Filter GTF
 #############################################
 
 filter_gtf <- function(infiles, outfile, comparison) {
@@ -68,24 +74,34 @@ filter_gtf <- function(infiles, outfile, comparison) {
     # Read GTF
     gtf <- rtracklayer::import(infiles[1])
 
+    # Read abundance
+    abundance_dataframe <- fread(infiles[2])
+    abundance_dataframe$fl_counts <- apply(abundance_dataframe[,12:ncol(abundance_dataframe)], 1, sum)
+
     # Read junctions
-    jc_dataframe <- fread(infiles[2]) %>% mutate(cell_type=gsub('.*?_(.*?)_.*', '\\1', sample))
+    jc_dataframe <- fread(infiles[3]) %>% mutate(cell_type=gsub('.*?_(.*?)_.*', '\\1', sample))
 
     # Filter samples
     if (comparison != 'all') {
         jc_dataframe <- jc_dataframe %>% filter(cell_type %in% comparison)
     }
 
-    # Collapse counts
+    # Collapse SJ counts
     count_dataframe <- jc_dataframe %>% group_by(transcript_id) %>% summarize(max_min_unique_sj=max(min_unique_sj), max_min_multi_sj=max(min_multi_sj))
 
-    # Get transcripts
-    min_sj <- ifelse(grepl('human', outfile), 3, 1)
-    filtered_transcripts <- count_dataframe %>% filter(max_min_unique_sj >= min_sj) %>% pull(transcript_id)
+    # Get SJ transcripts
+    junction_transcripts <- count_dataframe %>% filter(max_min_unique_sj >= 3) %>% pull(transcript_id)
+
+    # Get low FL count isoforms (min 3 for human, min 2 for mouse)
+    min_fl_threshold <- ifelse(grepl('human', outfile), 3, 2)
+    transcripts_to_remove <- abundance_dataframe %>% filter(fl_counts < min_fl_threshold & transcript_novelty != 'Known') %>% pull(annot_transcript_id)
+
+    # Get SJ-supported, FL-filtered transcripts
+    filtered_transcripts <- setdiff(junction_transcripts, transcripts_to_remove)
 
     # Filter GTF
     gtf_filtered <- gtf[gtf$transcript_id %in% filtered_transcripts,]
-
+    
     # Export
     rtracklayer::export(gtf_filtered, outfile, format='gtf')
 

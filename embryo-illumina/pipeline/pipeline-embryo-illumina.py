@@ -101,7 +101,7 @@ reference_dict = {
 		'isoseq': {
 			'genome_fasta': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa',
 			'gtf': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.gtf',
-			'gtf_junctions': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_junctions.tsv',
+			'talon_abundance': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_abundance_filtered.tsv',
 			'transcript_fasta': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.fasta',
 			'summary_file': 'arion/isoseq/summary.dir/human-isoseq_summary.tsv',
 			'cpat_predictions': 'arion/isoseq/s06-cpat.dir/human/Homo_sapiens.GRCh38.102_talon-cpat.ORF_prob.best_results.tsv',
@@ -118,7 +118,7 @@ reference_dict = {
 		'isoseq': {
 			'genome_fasta': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.dna_sm.primary_assembly.fa',
 			'gtf': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon.gtf',
-			'gtf_junctions': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon_junctions.tsv',
+			'talon_abundance': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon_abundance_filtered.tsv',
 			'transcript_fasta': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon.fasta',
 			'summary_file': 'arion/isoseq/summary.dir/mouse-isoseq_summary.tsv',
 			'cpat_predictions': 'arion/isoseq/s06-cpat.dir/mouse/Mus_musculus.GRCm38.102_talon-cpat.ORF_prob.best_results.tsv',
@@ -373,7 +373,7 @@ def runStar(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, W="06:00", GB=10, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_cmd=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.log'))
 
-# ls arion/illumina/s04-alignment.dir/*/*/STAR/pass2/*/*Aligned.sortedByCoord.out.log | jsc
+# ls arion/illumina/s03-junctions.dir/*/*/STAR/pass2/*/*Aligned.sortedByCoord.out.log | jsc
 
 #############################################
 ########## 4. Junction counts
@@ -382,8 +382,8 @@ def runStar(infiles, outfile):
 def sjCountJobs():
 	for organism, organism_references in reference_dict.items():
 		for source, reference_files in organism_references.items():
-			infiles = [reference_files['gtf_junctions']] + glob.glob('arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/pass2/*/*-SJ.out.tab'.format(**locals()))
-			outfile = 'arion/illumina/s04-alignment.dir/{organism}/isoseq/STAR/{organism}-{source}-junction_counts.tsv'.format(**locals())
+			infiles = [reference_files['talon_abundance']] + glob.glob('arion/illumina/s03-junctions.dir/{organism}/isoseq/STAR/pass2/*/*-SJ.out.tab'.format(**locals()))
+			outfile = 'arion/illumina/s03-junctions.dir/{organism}/isoseq/STAR/{organism}-{source}-junction_counts.tsv'.format(**locals())
 			yield [infiles, outfile]
 
 @files(sjCountJobs)
@@ -391,7 +391,7 @@ def sjCountJobs():
 def getJunctionCounts(infiles, outfile):
 
 	# Run
-	run_r_job('get_junction_counts', infiles, outfile, run_locally=False, W='02:00', GB=50, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+	run_r_job('get_junction_counts', infiles, outfile, run_locally=False, conda_env='env', W='02:00', GB=50, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
 #######################################################
 #######################################################
@@ -400,18 +400,20 @@ def getJunctionCounts(infiles, outfile):
 #######################################################
 
 #############################################
-########## 4. Filter GTF
+########## 1. Filter GTF
 #############################################
 
 def filterJobs():
 	for organism, comparisons in comparison_dict.items():
 		for source, reference_files in reference_dict[organism].items():
 			gtf = reference_files['gtf']
-			infiles = [gtf, 'arion/illumina/s04-alignment.dir/{organism}/{source}/STAR/{organism}-{source}_junction_counts.tsv'.format(**locals())]
+			talon_abundance_file = reference_files['talon_abundance']
+			sj_counts_file = 'arion/illumina/s03-junctions.dir/{organism}/{source}/STAR/{organism}-{source}-junction_counts.tsv'.format(**locals())
+			infiles = [gtf, talon_abundance_file, sj_counts_file]
 			for comparison in comparisons+['all']:
 				gtf_prefix = os.path.basename(gtf)[:-len('.gtf')]
 				comparison_string = '_vs_'.join(comparison) if comparison != 'all' else comparison
-				outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/RSEM/{comparison_string}/gtf/{gtf_prefix}-{comparison_string}-SJ_filtered.gtf'.format(**locals())
+				outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/gtf/{gtf_prefix}-{comparison_string}-SJ_filtered.gtf'.format(**locals())
 				yield [infiles, outfile, comparison]
 
 # @follows(functionToFollow)
@@ -421,7 +423,7 @@ def filterJobs():
 def filterGTF(infiles, outfile, comparison):
 
 	# Run
-	run_r_job('filter_gtf', infiles, outfile, additional_params=comparison, run_locally=False, W='00:30', GB=25, n=1, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))
+	run_r_job('filter_gtf', infiles, outfile, additional_params=comparison, run_locally=False, conda_env='env', W='00:10', GB=10, n=1, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))
 
 #############################################
 ########## 5. Create RSEM reference
