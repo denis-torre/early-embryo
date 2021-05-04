@@ -442,6 +442,51 @@ def buildStarIndexFiltered(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-5:]), wait=False)
 
+# find arion/illumina/s04-alignment.dir/*/isoseq/*/STAR/index -name "job.log" | jsc
+
+#############################################
+########## 3. STAR junctions
+#############################################
+
+# def junctionsFilteredJobs():
+# 	fastq_dataframe = pd.DataFrame([{'fastq': x, 'organism': x.split('/')[-4], 'sample_name': x.split('/')[-2]} for x in trimmed_illumina_fastq]).sort_values('fastq').groupby(['organism', 'sample_name'])['fastq'].apply(list).reset_index()
+# 	for organism, sample_dataframe in fastq_dataframe.groupby('organism'):
+# 		fastq_dict = sample_dataframe.drop('organism', axis=1).set_index('sample_name')['fastq'].to_dict()
+# 		for comparison in comparison_dict[organism]+['all']:
+# 			comparison_string = '_vs_'.join(comparison) if comparison != 'all' else comparison
+# 			for sample_name, fastq_files in fastq_dict.items():
+# 				cell_type = sample_name.split('_')[1].replace('2PN', '1C')
+# 				for source in ['isoseq']:
+# 					if cell_type==comparison[0] or cell_type==comparison[1] or comparison == 'all':
+# 						if comparison == 'all' and sample_name == 'human_morula_B3_4':
+# 							star_index = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/STAR/index'.format(**locals())
+# 							outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/STAR/pass1/{sample_name}/{sample_name}-SJ.out.tab'.format(**locals())
+# 							yield [(fastq_files, star_index, sj_files), outfile]
+
+# # @follows(getStarJunctions)
+
+# @files(junctionsFilteredJobs)
+
+# def getJunctionsFiltered(infiles, outfile):
+
+# 	# Split
+# 	fastq_files, star_index = infiles
+
+# 	# Prefix
+# 	prefix = outfile[:-len('SJ.out.tab')]
+
+# 	# Command
+# 	cmd_str = ''' STAR \
+# 		--genomeDir {star_index} \
+# 		--readFilesIn {fastq_files[0]} {fastq_files[1]} \
+# 		--readFilesCommand zcat \
+# 		--outFileNamePrefix {prefix} \
+# 		--runThreadN 100 \
+# 		--outSAMtype None'''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, W="06:00", GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
+
 #############################################
 ########## 3. STAR align
 #############################################
@@ -469,28 +514,27 @@ def runStarFiltered(infiles, outfile):
 
 	# Split
 	fastq_files, star_index, sj_files = infiles
-	print(fastq_files, star_index, outfile)
 
-	# # Variables
-	# prefix = outfile[:-len('Aligned.sortedByCoord.out.bam')]
-	# sj_files_str = ' '.join(sj_files)
+	# Variables
+	prefix = outfile[:-len('Aligned.sortedByCoord.out.bam')]
+	sj_files_str = ' '.join(sj_files)
 
-	# # Command
-	# cmd_str = ''' STAR \
-	# 	--genomeDir {star_index} \
-	# 	--readFilesIn {fastq_files[0]} {fastq_files[1]} \
-	# 	--readFilesCommand zcat \
-	# 	--outFileNamePrefix {prefix} \
-	# 	--runThreadN 32 \
-	# 	--sjdbFileChrStartEnd {sj_files_str} \
-	# 	--limitSjdbInsertNsj 5000000 \
-	# 	--quantMode TranscriptomeSAM GeneCounts \
-	# 	--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
+	# Command
+	cmd_str = ''' STAR \
+		--genomeDir {star_index} \
+		--readFilesIn {fastq_files[0]} {fastq_files[1]} \
+		--readFilesCommand zcat \
+		--outFileNamePrefix {prefix} \
+		--runThreadN 32 \
+		--sjdbFileChrStartEnd {sj_files_str} \
+		--limitSjdbInsertNsj 5000000 \
+		--quantMode TranscriptomeSAM GeneCounts \
+		--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
 
-	# # Run
-	# print(fastq_files, star_index, outfile)
-	# run_job(cmd_str, outfile, W="06:00", GB=10, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_cmd=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.log'))
+	# Run
+	run_job(cmd_str, outfile, W="06:00", GB=10, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_cmd=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.log'))
 
+# find arion/illumina/s04-alignment.dir -name "human_morula_B3_4-Log.progress.out" | xargs head
 
 # def starIndexJobs():
 # 	for organism, organism_references in reference_dict.items():
