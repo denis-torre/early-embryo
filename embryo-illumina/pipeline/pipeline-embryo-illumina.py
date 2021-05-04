@@ -426,7 +426,92 @@ def filterGTF(infiles, outfile, comparison):
 	run_r_job('filter_gtf', infiles, outfile, additional_params=comparison, run_locally=False, conda_env='env', W='00:10', GB=10, n=1, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))
 
 #############################################
-########## 5. Create RSEM reference
+########## 2. STAR index
+#############################################
+
+@transform(filterGTF,
+		   regex(r'(.*.dir)/(.*?)/(.*)/gtf/.*.gtf'),
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.dna_sm.primary_assembly.fa'),
+		   r'\1/\2/\3/STAR/index')
+
+def buildStarIndexFiltered(infiles, outfile):
+
+	# Command
+	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[1]} --sjdbGTFfile {infiles[0]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-5:]), wait=False)
+
+#############################################
+########## 3. STAR align
+#############################################
+
+def starFilteredJobs():
+	fastq_dataframe = pd.DataFrame([{'fastq': x, 'organism': x.split('/')[-4], 'sample_name': x.split('/')[-2]} for x in trimmed_illumina_fastq]).sort_values('fastq').groupby(['organism', 'sample_name'])['fastq'].apply(list).reset_index()
+	for organism, sample_dataframe in fastq_dataframe.groupby('organism'):
+		fastq_dict = sample_dataframe.drop('organism', axis=1).set_index('sample_name')['fastq'].to_dict()
+		for comparison in comparison_dict[organism]+['all']:
+			comparison_string = '_vs_'.join(comparison) if comparison != 'all' else comparison
+			for sample_name, fastq_files in fastq_dict.items():
+				cell_type = sample_name.split('_')[1].replace('2PN', '1C')
+				for source in ['isoseq']:
+					if cell_type==comparison[0] or cell_type==comparison[1] or comparison == 'all':
+						star_index = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/STAR/index'.format(**locals())
+						sj_files = glob.glob('arion/illumina/s03-junctions.dir/{organism}/{source}/STAR/pass1/*/*-SJ.out.tab'.format(**locals()))
+						outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/STAR/pass2/{sample_name}/{sample_name}-Aligned.sortedByCoord.out.bam'.format(**locals())
+						yield [(fastq_files, star_index, sj_files), outfile]
+
+# @follows(getStarJunctions)
+
+@files(starFilteredJobs)
+
+def runStarFiltered(infiles, outfile):
+
+	# Split
+	fastq_files, star_index, sj_files = infiles
+	print(fastq_files, star_index, outfile)
+
+	# # Variables
+	# prefix = outfile[:-len('Aligned.sortedByCoord.out.bam')]
+	# sj_files_str = ' '.join(sj_files)
+
+	# # Command
+	# cmd_str = ''' STAR \
+	# 	--genomeDir {star_index} \
+	# 	--readFilesIn {fastq_files[0]} {fastq_files[1]} \
+	# 	--readFilesCommand zcat \
+	# 	--outFileNamePrefix {prefix} \
+	# 	--runThreadN 32 \
+	# 	--sjdbFileChrStartEnd {sj_files_str} \
+	# 	--limitSjdbInsertNsj 5000000 \
+	# 	--quantMode TranscriptomeSAM GeneCounts \
+	# 	--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
+
+	# # Run
+	# print(fastq_files, star_index, outfile)
+	# run_job(cmd_str, outfile, W="06:00", GB=10, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_cmd=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.log'))
+
+
+# def starIndexJobs():
+# 	for organism, organism_references in reference_dict.items():
+# 		for source, reference_files in organism_references.items():
+# 			outfile = 'arion/illumina/s03-junctions.dir/{organism}/{source}/STAR/index'.format(**locals())
+# 			yield [reference_files, outfile]
+
+# @follows(runFastQC)
+
+# @files(starIndexJobs)
+
+# def buildStarIndex(infiles, outfile):
+
+# 	# Command
+# 	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {genome_fasta} --sjdbGTFfile {gtf} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals(), **infiles)
+
+# 	# Run
+# 	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=False)
+
+#############################################
+########## 2. Create STAR index
 #############################################
 
 # @transform('arion/illumina/s04-alignment.dir/mouse/isoseq/RSEM/1C_vs_2C/gtf/Mus_musculus.GRCm38.102_talon-1C_vs_2C-SJ_filtered.gtf',
