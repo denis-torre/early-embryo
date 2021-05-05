@@ -446,7 +446,27 @@ def buildStarIndexFiltered(infiles, outfile):
 # find arion/illumina/s04-alignment.dir/*/isoseq/*/STAR/index -name "job.log" | jsc
 
 #############################################
-########## 3. STAR
+########## 3. RSEM index
+#############################################
+
+@transform(filterGTF,
+		   regex(r'(arion)/(.*.dir)/(.*?)/(.*)/gtf/(.*).gtf'),
+		   add_inputs(r'\1/datasets/reference_genomes/\3/*.dna_sm.primary_assembly.fa'),
+		   r'\1/\2/\3/\4/RSEM/index/\5.idx.fa')
+
+def createRsemIndex(infiles, outfile):
+
+	# Command
+	basename = outfile[:-len('.idx.fa')]
+	cmd_str = ''' rsem-prepare-reference --gtf {infiles[0]} --num-threads 10 {infiles[1]} {basename} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=False, stdout=basename+'.log', stderr=basename+'.err')
+
+# find arion/illumina/s04-alignment.dir/*/*/*/RSEM/index -name "*.log" | jsc
+
+#############################################
+########## 4. STAR
 #############################################
 
 def starFilteredJobs():
@@ -493,27 +513,7 @@ def runStarFiltered(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, W="06:00", GB=10, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_cmd=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.log'))
 
-# find arion/illumina/s04-alignment.dir/human/*/*/STAR/pass2 -name "*.progress.out" | lr
-
-#############################################
-########## 4. RSEM index
-#############################################
-
-@transform(filterGTF,
-		   regex(r'(arion)/(.*.dir)/(.*?)/(.*)/gtf/(.*).gtf'),
-		   add_inputs(r'\1/datasets/reference_genomes/\3/*.dna_sm.primary_assembly.fa'),
-		   r'\1/\2/\3/\4/RSEM/index/\5.idx.fa')
-
-def createRsemIndex(infiles, outfile):
-
-	# Command
-	basename = outfile[:-len('.idx.fa')]
-	cmd_str = ''' rsem-prepare-reference --gtf {infiles[0]} --num-threads 10 {infiles[1]} {basename} '''.format(**locals())
-
-	# Run
-	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=False, stdout=basename+'.log', stderr=basename+'.err')
-
-# find arion/illumina/s04-alignment.dir/*/*/*/RSEM/index -name "*.log" | jsc
+# find arion/illumina/s04-alignment.dir/human/*/*/STAR/pass2 -name "*.log" | jsc
 
 #############################################
 ########## 5. RSEM expression
@@ -521,13 +521,14 @@ def createRsemIndex(infiles, outfile):
 
 # @follows(runStarFiltered, createRsemIndex)
 
-@transform('arion/illumina/s04-alignment.dir/human/isoseq/1C_vs_2C/STAR/pass2/human_2C_B3_3/human_2C_B3_3-Aligned.toTranscriptome.out.bam',
+# @transform('arion/illumina/s04-alignment.dir/human/isoseq/all/STAR/pass2/human_2C_B3_1/human_2C_B3_1-Aligned.toTranscriptome.out.bam',
 # @transform('arion/illumina/s04-alignment.dir/human/isoseq/1C_vs_2C/STAR/pass2/human_2C_B2_1/human_2C_B2_1-Aligned.toTranscriptome.out.bam',
 # @transform('arion/illumina/s04-alignment.dir/*/*/2C_vs_4C/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
 # @transform('arion/illumina/s04-alignment.dir/human/isoseq/2C_vs_4C/STAR/pass2/human_4C_B3_9/human_4C_B3_9-Aligned.toTranscriptome.out.bam',
+@transform('arion/illumina/s04-alignment.dir/*/*/*/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
 		   regex(r'(.*)/STAR/.*/(.*)-Aligned.toTranscriptome.out.bam'),
 		   add_inputs(r'\1/RSEM/index/*.idx.fa'),
-		   r'\1/RSEM/results/\2-200threads/\2.isoforms.results')
+		   r'\1/RSEM/results/\2/\2.isoforms.results')
 
 def runRsem(infiles, outfile):
 
@@ -541,17 +542,20 @@ def runRsem(infiles, outfile):
 		--strandedness none \
 		--paired-end \
 		--estimate-rspd \
-		--calc-ci \
 		--num-threads 200 \
 		{infiles[0]} \
 		{reference_name} \
 		{prefix} > {prefix}.rsem.log && \
 		rsem-plot-model {prefix} {prefix}.quant.pdf '''.format(**locals())
+		# --calc-ci \
 
 	# Run
-	run_job(cmd_str, outfile, W="02:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
+	if '8C_B3_1' not in outfile:
+		run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
 # find arion/illumina/s04-alignment.dir/*/*/*/RSEM/results -name "*.log" | grep -v .rsem | js
+
+# rsem-plot-transcript-wiggles --gene-list --show-unique human_2C_B3_3 gene_ids.txt test_wiggle.pdf
 
 # 	# Command
 # 	cmd_str = ''' rsem-calculate-expression \
