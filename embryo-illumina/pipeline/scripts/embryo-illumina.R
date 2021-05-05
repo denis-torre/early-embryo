@@ -81,6 +81,11 @@ filter_gtf <- function(infiles, outfile, comparison) {
     # Read junctions
     jc_dataframe <- fread(infiles[3]) %>% mutate(cell_type=gsub('.*?_(.*?)_.*', '\\1', sample))
 
+    # Remove outlier samples
+    outlier_samples <- c('human_morula_B3_1')
+    jc_dataframe <- jc_dataframe %>% filter(!sample %in% outlier_samples)
+    print(unique(jc_dataframe$sample))
+
     # Filter samples
     if (comparison != 'all') {
         jc_dataframe <- jc_dataframe %>% filter(cell_type %in% comparison)

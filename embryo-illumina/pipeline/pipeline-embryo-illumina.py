@@ -411,10 +411,11 @@ def filterJobs():
 			sj_counts_file = 'arion/illumina/s03-junctions.dir/{organism}/{source}/STAR/{organism}-{source}-junction_counts.tsv'.format(**locals())
 			infiles = [gtf, talon_abundance_file, sj_counts_file]
 			for comparison in comparisons+['all']:
-				gtf_prefix = os.path.basename(gtf)[:-len('.gtf')]
-				comparison_string = '_vs_'.join(comparison) if comparison != 'all' else comparison
-				outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/gtf/{gtf_prefix}-{comparison_string}-SJ_filtered.gtf'.format(**locals())
-				yield [infiles, outfile, comparison]
+				if comparison == 'all':
+					gtf_prefix = os.path.basename(gtf)[:-len('.gtf')]
+					comparison_string = '_vs_'.join(comparison) if comparison != 'all' else comparison
+					outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/gtf/{gtf_prefix}-{comparison_string}-SJ_filtered.gtf'.format(**locals())
+					yield [infiles, outfile, comparison]
 
 # @follows(functionToFollow)
 
@@ -440,52 +441,9 @@ def buildStarIndexFiltered(infiles, outfile):
 	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[1]} --sjdbGTFfile {infiles[0]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-5:]), wait=False)
+	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=3, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-5:]), wait=False)
 
 # find arion/illumina/s04-alignment.dir/*/isoseq/*/STAR/index -name "job.log" | jsc
-
-#############################################
-########## 3. STAR junctions
-#############################################
-
-# def junctionsFilteredJobs():
-# 	fastq_dataframe = pd.DataFrame([{'fastq': x, 'organism': x.split('/')[-4], 'sample_name': x.split('/')[-2]} for x in trimmed_illumina_fastq]).sort_values('fastq').groupby(['organism', 'sample_name'])['fastq'].apply(list).reset_index()
-# 	for organism, sample_dataframe in fastq_dataframe.groupby('organism'):
-# 		fastq_dict = sample_dataframe.drop('organism', axis=1).set_index('sample_name')['fastq'].to_dict()
-# 		for comparison in comparison_dict[organism]+['all']:
-# 			comparison_string = '_vs_'.join(comparison) if comparison != 'all' else comparison
-# 			for sample_name, fastq_files in fastq_dict.items():
-# 				cell_type = sample_name.split('_')[1].replace('2PN', '1C')
-# 				for source in ['isoseq']:
-# 					if cell_type==comparison[0] or cell_type==comparison[1] or comparison == 'all':
-# 						if comparison == 'all' and sample_name == 'human_morula_B3_4':
-# 							star_index = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/STAR/index'.format(**locals())
-# 							outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/STAR/pass1/{sample_name}/{sample_name}-SJ.out.tab'.format(**locals())
-# 							yield [(fastq_files, star_index, sj_files), outfile]
-
-# # @follows(getStarJunctions)
-
-# @files(junctionsFilteredJobs)
-
-# def getJunctionsFiltered(infiles, outfile):
-
-# 	# Split
-# 	fastq_files, star_index = infiles
-
-# 	# Prefix
-# 	prefix = outfile[:-len('SJ.out.tab')]
-
-# 	# Command
-# 	cmd_str = ''' STAR \
-# 		--genomeDir {star_index} \
-# 		--readFilesIn {fastq_files[0]} {fastq_files[1]} \
-# 		--readFilesCommand zcat \
-# 		--outFileNamePrefix {prefix} \
-# 		--runThreadN 100 \
-# 		--outSAMtype None'''.format(**locals())
-
-# 	# Run
-# 	run_job(cmd_str, outfile, W="06:00", GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
 
 #############################################
 ########## 3. STAR
@@ -500,7 +458,8 @@ def starFilteredJobs():
 			for sample_name, fastq_files in fastq_dict.items():
 				cell_type = sample_name.split('_')[1].replace('2PN', '1C')
 				for source in ['isoseq']:
-					if cell_type==comparison[0] or cell_type==comparison[1] or comparison == 'all':
+					# if cell_type==comparison[0] or cell_type==comparison[1] or comparison == 'all':
+					if comparison == 'all' and sample_name not in ['human_morula_B3_1']:
 						star_index = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/STAR/index'.format(**locals())
 						sj_files = glob.glob('arion/illumina/s03-junctions.dir/{organism}/{source}/STAR/pass1/*/*-SJ.out.tab'.format(**locals()))
 						outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/STAR/pass2/{sample_name}/{sample_name}-Aligned.sortedByCoord.out.bam'.format(**locals())
@@ -534,7 +493,7 @@ def runStarFiltered(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, W="06:00", GB=10, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_cmd=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.log'))
 
-# find arion/illumina/s04-alignment.dir/human/*/*/STAR/pass2 -name "*progress.out" | lr
+# find arion/illumina/s04-alignment.dir/human/*/*/STAR/pass2 -name "*.progress.out" | lr
 
 #############################################
 ########## 4. RSEM index
@@ -562,13 +521,13 @@ def createRsemIndex(infiles, outfile):
 
 # @follows(runStarFiltered, createRsemIndex)
 
-# @transform('arion/illumina/s04-alignment.dir/human/isoseq/1C_vs_2C/STAR/pass2/human_2C_B3_3/human_2C_B3_3-Aligned.toTranscriptome.out.bam',
+@transform('arion/illumina/s04-alignment.dir/human/isoseq/1C_vs_2C/STAR/pass2/human_2C_B3_3/human_2C_B3_3-Aligned.toTranscriptome.out.bam',
 # @transform('arion/illumina/s04-alignment.dir/human/isoseq/1C_vs_2C/STAR/pass2/human_2C_B2_1/human_2C_B2_1-Aligned.toTranscriptome.out.bam',
 # @transform('arion/illumina/s04-alignment.dir/*/*/2C_vs_4C/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
-@transform('arion/illumina/s04-alignment.dir/human/isoseq/2C_vs_4C/STAR/pass2/human_4C_B3_9/human_4C_B3_9-Aligned.toTranscriptome.out.bam',
+# @transform('arion/illumina/s04-alignment.dir/human/isoseq/2C_vs_4C/STAR/pass2/human_4C_B3_9/human_4C_B3_9-Aligned.toTranscriptome.out.bam',
 		   regex(r'(.*)/STAR/.*/(.*)-Aligned.toTranscriptome.out.bam'),
 		   add_inputs(r'\1/RSEM/index/*.idx.fa'),
-		   r'\1/RSEM/results/\2/\2.isoforms.results')
+		   r'\1/RSEM/results/\2-200threads/\2.isoforms.results')
 
 def runRsem(infiles, outfile):
 
@@ -590,10 +549,9 @@ def runRsem(infiles, outfile):
 		rsem-plot-model {prefix} {prefix}.quant.pdf '''.format(**locals())
 
 	# Run
-	print(os.path.dirname(outfile))
-	# run_job(cmd_str, outfile, W="00:30", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
+	run_job(cmd_str, outfile, W="02:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
-# find arion/illumina/s04-alignment.dir/*/*/*/RSEM/results -name "*.log"
+# find arion/illumina/s04-alignment.dir/*/*/*/RSEM/results -name "*.log" | grep -v .rsem | js
 
 # 	# Command
 # 	cmd_str = ''' rsem-calculate-expression \
