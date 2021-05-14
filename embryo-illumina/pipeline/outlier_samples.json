@@ -1,0 +1,17 @@
+{
+        "human": [
+                "human_morula_B3_1",
+                "human_2C_B3_3",
+                "human_2PN_B3_6",
+                "human_8C_B3_1"
+        ],
+        "mouse": [
+                "mouse_oocyte_Rep1",
+                "mouse_oocyte_Rep2",
+                "mouse_oocyte_Rep3",
+                "mouse_sperm_Rep1",
+                "mouse_sperm_Rep2",
+                "mouse_sperm_Rep3",
+                "mouse_sperm_Rep4"
+        ]
+}

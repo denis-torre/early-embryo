@@ -78,15 +78,21 @@ filter_gtf <- function(infiles, outfile, comparison) {
     abundance_dataframe <- fread(infiles[2])
     abundance_dataframe$fl_counts <- apply(abundance_dataframe[,12:ncol(abundance_dataframe)], 1, sum)
 
-    # Read junctions
+    # Read junctions'
     jc_dataframe <- fread(infiles[3]) %>% mutate(cell_type=gsub('.*?_(.*?)_.*', '\\1', sample))
 
     # Remove outlier samples
-    outlier_samples <- c('human_morula_B3_1')
-    jc_dataframe <- jc_dataframe %>% filter(!sample %in% outlier_samples)
+    organism <- gsub('.*.dir/(.*?)/.*', '\\1', outfile)
+    outlier_samples <- rjson::fromJSON(file=infiles[4])[[organism]]
+    if (length(outlier_samples) > 0) {
+        jc_dataframe <- jc_dataframe %>% filter(!sample %in% outlier_samples)
+    }
+    print('Samples used:')
     print(unique(jc_dataframe$sample))
+    print('Outlier samples:')
+    print(outlier_samples)
 
-    # Filter samples
+    # Filter samples within each comparison
     if (comparison != 'all') {
         jc_dataframe <- jc_dataframe %>% filter(cell_type %in% comparison)
     }

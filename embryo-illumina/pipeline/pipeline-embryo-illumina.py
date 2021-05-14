@@ -245,6 +245,7 @@ def qcJobs():
 		['arion/illumina/s02-fastqc.dir/mouse/trimmed', 'arion/illumina/multiqc/mouse_fastqc_trimmed/multiqc_report.html'],
 		['arion/illumina/s04-alignment.dir/human', 'arion/illumina/multiqc/human_alignment_trimmed/multiqc_report.html'],
 		['arion/illumina/s04-alignment.dir/mouse', 'arion/illumina/multiqc/mouse_alignment_trimmed/multiqc_report.html'],
+		['arion/illumina/s04-alignment.dir-old/human/isoseq/all', 'arion/illumina/multiqc/human_test_qc/multiqc_report.html'],
 	]
 	for files in filelist:
 		yield [files[0], files[1]]
@@ -386,6 +387,8 @@ def sjCountJobs():
 			outfile = 'arion/illumina/s03-junctions.dir/{organism}/isoseq/STAR/{organism}-{source}-junction_counts.tsv'.format(**locals())
 			yield [infiles, outfile]
 
+@follows(runStar)
+
 @files(sjCountJobs)
 
 def getJunctionCounts(infiles, outfile):
@@ -405,19 +408,21 @@ def getJunctionCounts(infiles, outfile):
 
 def filterJobs():
 	for organism, comparisons in comparison_dict.items():
-		for source, reference_files in reference_dict[organism].items():
-			gtf = reference_files['gtf']
-			talon_abundance_file = reference_files['talon_abundance']
-			sj_counts_file = 'arion/illumina/s03-junctions.dir/{organism}/{source}/STAR/{organism}-{source}-junction_counts.tsv'.format(**locals())
-			infiles = [gtf, talon_abundance_file, sj_counts_file]
-			for comparison in comparisons+['all']:
-				if comparison == 'all':
-					gtf_prefix = os.path.basename(gtf)[:-len('.gtf')]
-					comparison_string = '_vs_'.join(comparison) if comparison != 'all' else comparison
-					outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/gtf/{gtf_prefix}-{comparison_string}-SJ_filtered.gtf'.format(**locals())
-					yield [infiles, outfile, comparison]
+		source = 'isoseq'
+		reference_files = reference_dict[organism][source]
+		gtf = reference_files['gtf']
+		talon_abundance_file = reference_files['talon_abundance']
+		sj_counts_file = 'arion/illumina/s03-junctions.dir/{organism}/{source}/STAR/{organism}-{source}-junction_counts.tsv'.format(**locals())
+		outlier_sample_file = 'pipeline/outlier_samples.json'
+		infiles = [gtf, talon_abundance_file, sj_counts_file, outlier_sample_file]
+		for comparison in comparisons+['all']:
+			if comparison == 'all':
+				gtf_prefix = os.path.basename(gtf)[:-len('.gtf')]
+				comparison_string = '_vs_'.join(comparison) if comparison != 'all' else comparison
+				outfile = 'arion/illumina/s04-alignment.dir/{organism}/{comparison_string}/gtf/{gtf_prefix}-{comparison_string}-SJ_filtered.gtf'.format(**locals())
+				yield [infiles, outfile, comparison]
 
-# @follows(functionToFollow)
+@follows(getJunctionCounts)
 
 @files(filterJobs)
 
@@ -441,7 +446,7 @@ def buildStarIndexFiltered(infiles, outfile):
 	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[1]} --sjdbGTFfile {infiles[0]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=3, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-5:]), wait=False)
+	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=3, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=False)
 
 # find arion/illumina/s04-alignment.dir/*/isoseq/*/STAR/index -name "job.log" | jsc
 
@@ -550,10 +555,10 @@ def runRsem(infiles, outfile):
 		# --calc-ci \
 
 	# Run
-	if '8C_B3_1' not in outfile:
+	if '8C_B3_1' in outfile:
 		run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
-# find arion/illumina/s04-alignment.dir/*/*/*/RSEM/results -name "*.log" | grep -v .rsem | js
+# find arion/illumina/s04-alignment.dir/*/*/*/RSEM/results -name "*.log" | grep -v .rsem | jsc
 
 # rsem-plot-transcript-wiggles --gene-list --show-unique human_2C_B3_3 gene_ids.txt test_wiggle.pdf
 

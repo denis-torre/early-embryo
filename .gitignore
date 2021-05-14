@@ -5,3 +5,4 @@ notebooks
 settings.json
 *.sqlite
 *.pyc
+talon_stat.txt
