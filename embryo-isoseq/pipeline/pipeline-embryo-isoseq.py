@@ -459,7 +459,7 @@ def renameFastaChromosomes(infile, outfile):
 ########## 2. Clean
 #############################################
 
-@follows(mergeSJs)
+@follows(mergeSJs, renameFastaChromosomes)
 
 @transform(filterSam,
 		   regex(r'(.*)/s02-alignment.dir/minimap2/(.*)/(.*)/.*.sam'),
@@ -584,7 +584,7 @@ def createTalonConfig(infiles, outfile):
 		os.makedirs(outdir)
 
 	# Write
-	# config_dataframe.to_csv(outfile, header=False, index=False)
+	config_dataframe.to_csv(outfile, header=False, index=False)
 
 #############################################
 ########## 3. Run
@@ -797,7 +797,7 @@ def getJunctions(infile, outfile):
 ########## 9. Get abundance
 #############################################
 
-# @follows(filterTranscripts)
+@follows(filterTranscripts)
 
 @transform('arion/isoseq/s05-talon.dir/*/*.102_talon.db',
 		   regex(r'(.*)/(.*).db'),
@@ -1051,7 +1051,7 @@ def mergePfamResults(infiles, outfile):
 ########## 1. Split
 #############################################
 
-# @follows(getFASTA)
+@follows(getFASTA)
 
 @subdivide('arion/isoseq/s05-talon.dir/*/*_talon.fasta',
 		   regex(r'(.*)/s05-talon.dir/(.*)/(.*).fasta'),
