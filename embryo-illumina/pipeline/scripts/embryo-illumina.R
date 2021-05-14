@@ -31,7 +31,6 @@ get_junction_counts <- function(infiles, outfile) {
     # Read junctions
     junction_dataframe <- fread(infiles[1]) %>% mutate(junction_start=junction_start+1, junction_end=junction_end-1) %>% rename('chrom'='seqid') %>% select(-exon_ids)
 
-
     # Read SJ counts
     count_dataframe <- lapply(infiles[2:length(infiles)], function(x) {
         

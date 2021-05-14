@@ -107,6 +107,7 @@ reference_dict = {
 			'genome_fasta': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa',
 			'gtf': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.gtf',
 			'talon_abundance': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_abundance_filtered.tsv',
+			'talon_junctions': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_junctions.tsv',
 			'transcript_fasta': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.fasta',
 			'summary_file': 'arion/isoseq/summary.dir/human-isoseq_summary.tsv',
 			'cpat_predictions': 'arion/isoseq/s06-cpat.dir/human/Homo_sapiens.GRCh38.102_talon-cpat.ORF_prob.best_results.tsv',
@@ -124,6 +125,7 @@ reference_dict = {
 			'genome_fasta': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.dna_sm.primary_assembly.fa',
 			'gtf': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon.gtf',
 			'talon_abundance': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon_abundance_filtered.tsv',
+			'talon_junctions': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon_junctions.tsv',
 			'transcript_fasta': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon.fasta',
 			'summary_file': 'arion/isoseq/summary.dir/mouse-isoseq_summary.tsv',
 			'cpat_predictions': 'arion/isoseq/s06-cpat.dir/mouse/Mus_musculus.GRCm38.102_talon-cpat.ORF_prob.best_results.tsv',
@@ -388,7 +390,7 @@ def runStar(infiles, outfile):
 def sjCountJobs():
 	for organism, organism_references in reference_dict.items():
 		for source, reference_files in organism_references.items():
-			infiles = [reference_files['talon_abundance']] + glob.glob('arion/illumina/s03-junctions.dir/{organism}/isoseq/STAR/pass2/*/*-SJ.out.tab'.format(**locals()))
+			infiles = [reference_files['talon_junctions']] + glob.glob('arion/illumina/s03-junctions.dir/{organism}/isoseq/STAR/pass2/*/*-SJ.out.tab'.format(**locals()))
 			outfile = 'arion/illumina/s03-junctions.dir/{organism}/isoseq/STAR/{organism}-{source}-junction_counts.tsv'.format(**locals())
 			yield [infiles, outfile]
 
