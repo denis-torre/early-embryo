@@ -90,6 +90,11 @@ human_illumina = glob.glob('arion/datasets/human/human_embryo_ilmn/*/*/*.fastq.g
 all_illumina_fastq = glob.glob('arion/illumina/s01-fastq.dir/*/*/*/*.f*q.gz')
 trimmed_illumina_fastq = glob.glob('arion/illumina/s01-fastq.dir/*/trimmed/*/*.fq.gz')
 
+# Outlier samples
+outlier_sample_file = 'pipeline/outlier_samples.json'
+with open(outlier_sample_file) as openfile:
+	outlier_samples = json.load(openfile)
+
 # References
 reference_dict = {
 	'human': {
@@ -413,7 +418,6 @@ def filterJobs():
 		gtf = reference_files['gtf']
 		talon_abundance_file = reference_files['talon_abundance']
 		sj_counts_file = 'arion/illumina/s03-junctions.dir/{organism}/{source}/STAR/{organism}-{source}-junction_counts.tsv'.format(**locals())
-		outlier_sample_file = 'pipeline/outlier_samples.json'
 		infiles = [gtf, talon_abundance_file, sj_counts_file, outlier_sample_file]
 		for comparison in comparisons+['all']:
 			if comparison == 'all':
@@ -475,22 +479,30 @@ def createRsemIndex(infiles, outfile):
 #############################################
 
 def starFilteredJobs():
+	# Read samples
 	fastq_dataframe = pd.DataFrame([{'fastq': x, 'organism': x.split('/')[-4], 'sample_name': x.split('/')[-2]} for x in trimmed_illumina_fastq]).sort_values('fastq').groupby(['organism', 'sample_name'])['fastq'].apply(list).reset_index()
+
+	# Loop through organisms
 	for organism, sample_dataframe in fastq_dataframe.groupby('organism'):
 		fastq_dict = sample_dataframe.drop('organism', axis=1).set_index('sample_name')['fastq'].to_dict()
+
+		# Loop through comparisons
 		for comparison in comparison_dict[organism]+['all']:
 			comparison_string = '_vs_'.join(comparison) if comparison != 'all' else comparison
+
+			# Loop throush samples
 			for sample_name, fastq_files in fastq_dict.items():
 				cell_type = sample_name.split('_')[1].replace('2PN', '1C')
-				for source in ['isoseq']:
-					# if cell_type==comparison[0] or cell_type==comparison[1] or comparison == 'all':
-					if comparison == 'all' and sample_name not in ['human_morula_B3_1']:
-						star_index = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/STAR/index'.format(**locals())
-						sj_files = glob.glob('arion/illumina/s03-junctions.dir/{organism}/{source}/STAR/pass1/*/*-SJ.out.tab'.format(**locals()))
-						outfile = 'arion/illumina/s04-alignment.dir/{organism}/{source}/{comparison_string}/STAR/pass2/{sample_name}/{sample_name}-Aligned.sortedByCoord.out.bam'.format(**locals())
-						yield [(fastq_files, star_index, sj_files), outfile]
 
-# @follows(getStarJunctions)
+				# Select samples for each comparison
+				# if cell_type==comparison[0] or cell_type==comparison[1] or comparison == 'all':
+				if comparison == 'all' and sample_name not in outlier_samples[organism]:
+					star_index = 'arion/illumina/s04-alignment.dir/{organism}/{comparison_string}/STAR/index'.format(**locals())
+					sj_files = glob.glob('arion/illumina/s03-junctions.dir/{organism}/isoseq/STAR/pass1/*/*-SJ.out.tab'.format(**locals()))
+					outfile = 'arion/illumina/s04-alignment.dir/{organism}/{comparison_string}/STAR/pass2/{sample_name}/{sample_name}-Aligned.sortedByCoord.out.bam'.format(**locals())
+					yield [(fastq_files, star_index, sj_files), outfile]
+
+@follows(getStarJunctions)
 
 @files(starFilteredJobs)
 
