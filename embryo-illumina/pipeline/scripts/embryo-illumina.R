@@ -73,16 +73,17 @@ filter_gtf <- function(infiles, outfile, comparison) {
     # Read GTF
     gtf <- rtracklayer::import(infiles[1])
 
-    # Read abundance
-    abundance_dataframe <- fread(infiles[2])
-    abundance_dataframe$fl_counts <- apply(abundance_dataframe[,12:ncol(abundance_dataframe)], 1, sum)
-
-    # Read junctions'
-    jc_dataframe <- fread(infiles[3]) %>% mutate(cell_type=gsub('.*?_(.*?)_.*', '\\1', sample))
-
-    # Remove outlier samples
+    # Get outlier samples
     organism <- gsub('.*.dir/(.*?)/.*', '\\1', outfile)
     outlier_samples <- rjson::fromJSON(file=infiles[4])[[organism]]
+
+    # Read and filter abundance
+    abundance_dataframe <- fread(infiles[2]) %>% as.data.frame
+    abundance_dataframe <- abundance_dataframe[,!colnames(abundance_dataframe) %in% outlier_samples]
+    abundance_dataframe$fl_counts <- apply(abundance_dataframe[,12:ncol(abundance_dataframe)], 1, sum)
+
+    # Read and filter junctions
+    jc_dataframe <- fread(infiles[3]) %>% mutate(cell_type=gsub('.*?_(.*?)_.*', '\\1', sample))
     if (length(outlier_samples) > 0) {
         jc_dataframe <- jc_dataframe %>% filter(!sample %in% outlier_samples)
     }
@@ -111,10 +112,10 @@ filter_gtf <- function(infiles, outfile, comparison) {
 
     # Filter GTF
     gtf_filtered <- gtf[gtf$transcript_id %in% filtered_transcripts,]
-    
+
     # Export
     rtracklayer::export(gtf_filtered, outfile, format='gtf')
-
+    
 }
 
 #######################################################

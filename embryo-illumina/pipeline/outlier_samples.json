@@ -6,9 +6,11 @@
                 "human_8C_B3_1"
         ],
         "mouse": [
+                "mouse_oocyte",
                 "mouse_oocyte_Rep1",
                 "mouse_oocyte_Rep2",
                 "mouse_oocyte_Rep3",
+                "mouse_sperm",
                 "mouse_sperm_Rep1",
                 "mouse_sperm_Rep2",
                 "mouse_sperm_Rep3",

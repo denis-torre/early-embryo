@@ -532,7 +532,7 @@ def runStarFiltered(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, W="06:00", GB=10, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_cmd=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.log'))
 
-# find arion/illumina/s04-alignment.dir/human/*/*/STAR/pass2 -name "*.log" | jsc
+# find arion/illumina/s04-alignment.dir/human/*/STAR/pass2 -name "*.log" | jsc
 
 #############################################
 ########## 5. RSEM expression
@@ -544,7 +544,7 @@ def runStarFiltered(infiles, outfile):
 # @transform('arion/illumina/s04-alignment.dir/human/isoseq/1C_vs_2C/STAR/pass2/human_2C_B2_1/human_2C_B2_1-Aligned.toTranscriptome.out.bam',
 # @transform('arion/illumina/s04-alignment.dir/*/*/2C_vs_4C/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
 # @transform('arion/illumina/s04-alignment.dir/human/isoseq/2C_vs_4C/STAR/pass2/human_4C_B3_9/human_4C_B3_9-Aligned.toTranscriptome.out.bam',
-@transform('arion/illumina/s04-alignment.dir/*/*/*/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
+@transform('arion/illumina/s04-alignment.dir/*/*/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
 		   regex(r'(.*)/STAR/.*/(.*)-Aligned.toTranscriptome.out.bam'),
 		   add_inputs(r'\1/RSEM/index/*.idx.fa'),
 		   r'\1/RSEM/results/\2/\2.isoforms.results')
@@ -569,8 +569,7 @@ def runRsem(infiles, outfile):
 		# --calc-ci \
 
 	# Run
-	if '8C_B3_1' in outfile:
-		run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
+	run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
 # find arion/illumina/s04-alignment.dir/*/*/*/RSEM/results -name "*.log" | grep -v .rsem | jsc
 
