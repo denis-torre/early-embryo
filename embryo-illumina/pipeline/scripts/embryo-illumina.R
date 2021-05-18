@@ -129,52 +129,43 @@ filter_gtf <- function(infiles, outfile, comparison) {
 #############################################
 
 aggregate_counts <- function(infiles, outfile) {
-
+    
     # Load
     suppressPackageStartupMessages(require(tximeta)) #tximeta_1.8.2
-    suppressPackageStartupMessages(require(BiocFileCache))
     suppressPackageStartupMessages(require(SummarizedExperiment))
     suppressPackageStartupMessages(require(DESeq2))
 
     # Get organism
     organism <- gsub('.*/(.*?)_.*.rda', '\\1', outfile)
 
-    # Link transcriptome
-    if (grepl('isoseq', outfile)) {
-
-        # Clear cache
-        message('Clearing cache...')
-        if (interactive()) {
-            bfcloc <- getTximetaBFC()
-        } else {
-            bfcloc <- tempdir()
-        }
-        bfc <- BiocFileCache(bfcloc)
-        bfcremove(bfc, bfcquery(bfc, "linkedTxomeTbl")$rid)
-        print(bfcinfo(bfc))
-        message('Done!')
-
-        # Create transcriptome
-        makeLinkedTxome(
-            indexDir = infiles[2],
-            fasta = infiles[3],
-            gtf = infiles[4],
-            write = TRUE,
-            jsonFile = gsub('counts.rda', 'salmon_index.json', outfile),
-            source = 'IsoSeq embryo',
-            organism = ifelse(organism=='mouse', 'Mus musculus', 'Homo sapiens'),
-            release = '20210408_v5',
-            genome = ifelse(organism=='mouse', 'mm10', 'hg38')
-        )
-        transcript_dataframe <- fread(infiles[5])
-    }
-
     # Get sample dataframe
     sample_dataframe <- fread(infiles[1])
 
-    # Get SummarizedExperiment
-    se <- tximeta(sample_dataframe, type='salmon', skipMeta=FALSE)
-    gse <- summarizeToGene(se)
+    # Read GTF
+    gtf <- rtracklayer::readGFF(infiles[2]) %>% select(-source) %>% filter(type=='transcript')
+
+    # Get transcript information
+    transcript_dataframe <- gtf %>% select(gene_id, gene_name, gene_status, transcript_id, transcript_name, transcript_status, transcript_biotype, NNC_transcript, NIC_transcript, intergenic_transcript, antisense_transcript) %>% distinct
+    rownames(transcript_dataframe) <- transcript_dataframe$transcript_id
+
+    # Get gene information
+    gene_dataframe <- transcript_dataframe %>% group_by(gene_id, gene_name, gene_status) %>% summarize(
+        nr_transcripts=length(unique(transcript_id)),
+        novel_transcripts=sum(transcript_status=='NOVEL'),
+        NNC_transcripts=sum(NNC_transcript=='TRUE', na.rm=TRUE),
+        NIC_transcripts=sum(NIC_transcript=='TRUE', na.rm=TRUE),
+        intergenic_transcripts=sum(intergenic_transcript=='TRUE', na.rm=TRUE),
+        antisense_transcripts=sum(antisense_transcript=='TRUE', na.rm=TRUE)
+    ) %>% as.data.frame
+    rownames(gene_dataframe) <- gene_dataframe$gene_id
+
+    # Read isoform counts
+    se <- tximeta(sample_dataframe, type='rsem', txIn=TRUE, txOut=TRUE)
+    rowData(se) <- transcript_dataframe[rownames(rowData(se)),]
+
+    # Read gene counts
+    gse <- tximeta(sample_dataframe, type='rsem', txIn=TRUE, txOut=FALSE, tx2gene=transcript_dataframe %>% select(transcript_id, gene_id))
+    rowData(gse) <- gene_dataframe[rownames(rowData(gse)),]
 
     # Create DESeq dataset
     if (organism == 'human') {
@@ -190,11 +181,7 @@ aggregate_counts <- function(infiles, outfile) {
     }
 
     # Save
-    if (grepl('isoseq', outfile)) {
-        save(se, gse, dds_list, transcript_dataframe, file=outfile)
-    } else {
-        save(se, gse, dds_list, file=outfile)
-    }
+    save(se, gse, dds_list, file=outfile)
 
 }
 
@@ -229,7 +216,7 @@ get_transcript_tpm <- function(infile, outfile) {
 #############################################
 
 run_deseq2 <- function(infiles, outfileRoot, feature) {
-    # infiles=c('arion/illumina/s05-expression.dir/mouse/isoseq/mouse_isoseq-counts.rda', 'pipeline/comparisons.json'); outfileRoot <- 'arion/illumina/s06-differential_expression.dir/mouse/isoseq/mouse_isoseq-{comparison[1]}_vs_{comparison[2]}-{feature}-deseq.tsv'; feature <- 'gene'
+    
     # Library
     suppressPackageStartupMessages(require(rjson))
     suppressPackageStartupMessages(require(DESeq2))
@@ -239,7 +226,6 @@ run_deseq2 <- function(infiles, outfileRoot, feature) {
 
     # Read comparisons
     organism <- gsub('.*.dir/(.*?)/(.*?)/.*', '\\1', outfileRoot)
-    source <- gsub('.*.dir/(.*?)/(.*?)/.*', '\\2', outfileRoot)
     comparisons <- fromJSON(file = infiles[2])[[organism]]
 
     # Get DDS
@@ -260,20 +246,12 @@ run_deseq2 <- function(infiles, outfileRoot, feature) {
         deseq_dataframe <- results(dds, contrast = c('cell_type', comparison[2], comparison[1]), alpha=0.05) %>% as.data.frame %>% rownames_to_column(ifelse(feature == 'transcript', 'transcript_id', 'gene_id')) %>% filter(baseMean > 0)
         
         # Add annotation
-        if (source == 'ensembl') {
-            if (feature == 'gene') {
-                result_dataframe <- rowData(dds) %>% as.data.frame %>% select(gene_id, gene_name, entrezid, gene_biotype) %>% inner_join(deseq_dataframe, by='gene_id')
-            } else if (feature == 'transcript') {
-                result_dataframe <- rowData(dds) %>% as.data.frame %>% select(tx_id, gene_id, tx_biotype) %>% dplyr::rename('transcript_id'='tx_id') %>% inner_join(deseq_dataframe, by='transcript_id')
-            }
-        } else if (source == 'isoseq') {
-            if (feature == 'gene') {
-                gene_dataframe <- transcript_dataframe %>% select(gene_id, gene_name, gene_biotype, gene_source, gene_category) %>% distinct
-                result_dataframe <- gene_dataframe %>% right_join(deseq_dataframe, by='gene_id')
-            } else if (feature == 'transcript') {
-                transcript_dataframe <- transcript_dataframe %>% select(transcript_id, transcript_name, transcript_category, transcript_source, transcript_biotype, coding_probability, coding, nr_domains, domains, nr_repeats, repeats)
-                result_dataframe <- deseq_dataframe %>% left_join(transcript_dataframe, by='transcript_id')
-            }
+        if (feature == 'gene') {
+            gene_dataframe <- as.data.frame(rowData(dds))[,1:5]
+            result_dataframe <- gene_dataframe %>% right_join(deseq_dataframe, by='gene_id')
+        } else if (feature == 'transcript') {
+            transcript_dataframe <- as.data.frame(rowData(dds)) %>% select(transcript_id, transcript_name, transcript_status, transcript_biotype, gene_id, gene_name, gene_status, NNC_transcript, NIC_transcript, intergenic_transcript, antisense_transcript)
+            result_dataframe <- deseq_dataframe %>% left_join(transcript_dataframe, by='transcript_id')
         }
 
         # Sort

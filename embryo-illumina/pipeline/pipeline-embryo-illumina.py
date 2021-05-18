@@ -452,7 +452,7 @@ def buildStarIndexFiltered(infiles, outfile):
 	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[1]} --sjdbGTFfile {infiles[0]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=3, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=False)
+	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=3, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=True)
 
 # find arion/illumina/s04-alignment.dir/*/isoseq/*/STAR/index -name "job.log" | jsc
 
@@ -481,6 +481,7 @@ def createRsemIndex(infiles, outfile):
 #############################################
 
 def starFilteredJobs():
+
 	# Read samples
 	fastq_dataframe = pd.DataFrame([{'fastq': x, 'organism': x.split('/')[-4], 'sample_name': x.split('/')[-2]} for x in trimmed_illumina_fastq]).sort_values('fastq').groupby(['organism', 'sample_name'])['fastq'].apply(list).reset_index()
 
@@ -504,7 +505,7 @@ def starFilteredJobs():
 					outfile = 'arion/illumina/s04-alignment.dir/{organism}/{comparison_string}/STAR/pass2/{sample_name}/{sample_name}-Aligned.sortedByCoord.out.bam'.format(**locals())
 					yield [(fastq_files, star_index, sj_files), outfile]
 
-@follows(getStarJunctions)
+@follows(getStarJunctions, buildStarIndexFiltered)
 
 @files(starFilteredJobs)
 
@@ -538,12 +539,9 @@ def runStarFiltered(infiles, outfile):
 ########## 5. RSEM expression
 #############################################
 
-# @follows(runStarFiltered, createRsemIndex)
+@follows(runStarFiltered, createRsemIndex)
 
-# @transform('arion/illumina/s04-alignment.dir/human/isoseq/all/STAR/pass2/human_2C_B3_1/human_2C_B3_1-Aligned.toTranscriptome.out.bam',
-# @transform('arion/illumina/s04-alignment.dir/human/isoseq/1C_vs_2C/STAR/pass2/human_2C_B2_1/human_2C_B2_1-Aligned.toTranscriptome.out.bam',
-# @transform('arion/illumina/s04-alignment.dir/*/*/2C_vs_4C/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
-# @transform('arion/illumina/s04-alignment.dir/human/isoseq/2C_vs_4C/STAR/pass2/human_4C_B3_9/human_4C_B3_9-Aligned.toTranscriptome.out.bam',
+# @transform('arion/illumina/s04-alignment.dir/human/2C_vs_4C/STAR/pass2/human_4C_B3_9/human_4C_B3_9-Aligned.toTranscriptome.out.bam',
 @transform('arion/illumina/s04-alignment.dir/*/*/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
 		   regex(r'(.*)/STAR/.*/(.*)-Aligned.toTranscriptome.out.bam'),
 		   add_inputs(r'\1/RSEM/index/*.idx.fa'),
@@ -569,137 +567,13 @@ def runRsem(infiles, outfile):
 		# --calc-ci \
 
 	# Run
-	run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
-
-# find arion/illumina/s04-alignment.dir/*/*/*/RSEM/results -name "*.log" | grep -v .rsem | jsc
-
-# rsem-plot-transcript-wiggles --gene-list --show-unique human_2C_B3_3 gene_ids.txt test_wiggle.pdf
-
-# 	# Command
-# 	cmd_str = ''' rsem-calculate-expression \
-# 		--star \
-# 		--star-gzipped-read-file \
-# 		--num-threads 30 \
-# 		--output-genome-bam \
-# 		arion/illumina/s01-fastq.dir/mouse/trimmed/mouse_1C_Rep3/SRR10266997_1_val_1.fq.gz arion/illumina/s01-fastq.dir/mouse/trimmed/mouse_1C_Rep3/SRR10266997_2_val_2.fq.gz \
-# 		arion/rsem_test/index_v2/test_index \
-# 		arion/rsem_test/test_results/mouse_1C_Rep3.rsem '''.format(**locals())
-
-
-
-
-
-# # @transform(filterGTF,
-# 		   regex(r'(arion)/(.*.dir)/(.*?)/(.*)/gtf/(.*).gtf'),
-# 		   add_inputs(r'\1/datasets/reference_genomes/\3/*.dna_sm.primary_assembly.fa'),
-# 		   r'\1/\2/\3/\4/index_v3/\5.idx.fa')
-
-# def createRsemReference(infiles, outfile):
-
-
-# find arion/illumina/s04-alignment.dir -name "human_morula_B3_4-Log.progress.out" | xargs head
-
-# def starIndexJobs():
-# 	for organism, organism_references in reference_dict.items():
-# 		for source, reference_files in organism_references.items():
-# 			outfile = 'arion/illumina/s03-junctions.dir/{organism}/{source}/STAR/index'.format(**locals())
-# 			yield [reference_files, outfile]
-
-# @follows(runFastQC)
-
-# @files(starIndexJobs)
-
-# def buildStarIndex(infiles, outfile):
-
-# 	# Command
-# 	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {genome_fasta} --sjdbGTFfile {gtf} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals(), **infiles)
-
-# 	# Run
-# 	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=False)
-
-#############################################
-########## 2. Create STAR index
-#############################################
-
-# @transform('arion/illumina/s04-alignment.dir/mouse/isoseq/RSEM/1C_vs_2C/gtf/Mus_musculus.GRCm38.102_talon-1C_vs_2C-SJ_filtered.gtf',
-# # @transform(filterGTF,
-# 		   regex(r'(arion)/(.*.dir)/(.*?)/(.*)/gtf/(.*).gtf'),
-# 		   add_inputs(r'\1/datasets/reference_genomes/\3/*.dna_sm.primary_assembly.fa'),
-# 		   r'\1/\2/\3/\4/index_v3/\5.idx.fa')
-
-# def createRsemReference(infiles, outfile):
-
-# 	# Command
-# 	basename = outfile[:-len('.idx.fa')]
-# 	cmd_str = ''' rsem-prepare-reference --star --gtf {infiles[0]} --num-threads 10 {infiles[1]} {basename} '''.format(**locals())
-
-# 	# Run
-# 	run_job(cmd_str, outfile, W="01:00", GB=10, n=3, modules=['rsem/1.3.3'], print_cmd=False)#, stdout=os.path.join(basename, '_job.log'), stderr=os.path.join(basename, '_job.err'))
-
-# @transform('arion/illumina/s04-alignment.dir/mouse/isoseq/RSEM/1C_vs_2C/gtf/Mus_musculus.GRCm38.102_talon-1C_vs_2C-SJ_filtered.gtf',
-# # @transform(filterGTF,
-# 		   regex(r'(arion)/(.*.dir)/(.*?)/(.*)/gtf/(.*).gtf'),
-# 		   add_inputs(r'\1/datasets/reference_genomes/\3/*.dna_sm.primary_assembly.fa'),
-# 		   r'arion/rsem_test/index_v2/test_index')
-
-# def createRsemReference(infiles, outfile):
-
-# 	# Command
-# 	cmd_str = ''' rsem-prepare-reference --star --gtf {infiles[0]} --num-threads 10 {infiles[1]} {outfile} '''.format(**locals())
-
-# 	# Run
-# 	run_job(cmd_str, outfile, W="01:00", GB=10, n=3, modules=['rsem/1.3.3', 'star/2.7.5b'], print_cmd=False)#, stdout=os.path.join(outfile, 'job.log'), stderr=os.path.join(outfile, 'job.err'))
-
-#############################################
-########## 6. Calculate expression
-#############################################
-
-# @transform('arion/illumina/s04-alignment.dir/mouse/isoseq/STAR/pass2/mouse_2C*/*-Aligned.sortedByCoord.out.bam',
-# 		   regex(r'(.*)/STAR/.*/(.*).bam'),
-# 		   add_inputs(createRsemReference),
-# 		   r'\1/RSEM_v3/\2_rsem_test.isoforms.results')
-
-# def runRsem(infiles, outfile):
-
-# 	# Command
-# 	reference_name = infiles[1][:-len('.idx.fa')]
-# 	basename = outfile[:-len('.isoforms.results')]
-# 	cmd_str = ''' rsem-calculate-expression --star --num-threads 3 --paired-end --alignments {infiles[0]} {reference_name} {basename} '''.format(**locals())
-
-# 	# Run
-# 	run_job(cmd_str, outfile, W="02:00", GB=10, n=3, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))#, stdout=os.path.join(basename, '_job.log'), stderr=os.path.join(basename, '_job.err'))
-
-# @files('arion/illumina/s04-alignment.dir/mouse/isoseq/STAR/pass2/mouse_2C*/*-Aligned.sortedByCoord.out.bam',
-# 		'arion/rsem_test/test_results/')
-
-# def runRsem(infile, outfile):
-
-# 	# Command
-# 	cmd_str = ''' rsem-calculate-expression \
-# 		--paired-end \
-# 		--star \
-# 		--star-gzipped-read-file \
-# 		--num-threads 30 \
-# 		--output-genome-bam \
-# 		arion/illumina/s01-fastq.dir/mouse/trimmed/mouse_1C_Rep3/SRR10266997_1_val_1.fq.gz arion/illumina/s01-fastq.dir/mouse/trimmed/mouse_1C_Rep3/SRR10266997_2_val_2.fq.gz \
-# 		arion/rsem_test/index_v2/test_index \
-# 		arion/rsem_test/test_results/mouse_1C_Rep3.rsem '''.format(**locals())
-
-# 	# Run
-# 	run_job(cmd_str, outfile, W="02:00", GB=30, n=3, modules=['rsem/1.3.3', 'star/2.7.5b'], print_cmd=False, ow=True, jobname='rsem_test', stdout=os.path.join(outfile, 'job.log'), stderr=os.path.join(outfile, 'job.err'))
-
-
-# $1 == STAR alignments bam file
-# $2 == name of STAR index
-# #3 == sample name
-
-# rsem-calculate-expression --star --num-threads ${SLURM_JOB_CPUS_PER_NODE} --alignments $1 $(pwd)/$2 $(pwd)/$3
+	# run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
 #############################################
 ########## 4. Create BigWig
 #############################################
 
-@transform(runStar,
+@transform(runStarFiltered,
 		   suffix('-Aligned.sortedByCoord.out.bam'),
 		   '.bw')
 
@@ -711,8 +585,6 @@ def createBigWig(infile, outfile):
 	# Run
 	run_job(cmd_str, outfile, conda_env='env', W='05:00', n=7, GB=6)
 
-# /hpc/users/torred23/pipelines/projects/early-embryo/arion/illumina/s04-alignment.dir/mouse/isoseq/STAR/pass2/*/*.bw
-
 #######################################################
 #######################################################
 ########## S5. Expression
@@ -723,82 +595,65 @@ def createBigWig(infile, outfile):
 ########## 1. Prepare metadata
 #############################################
 
-# # @collate('arion/illumina/s04-alignment.dir/*/ensembl/salmon/*/quant.sf',
-# @collate(runSalmon,
-# 		 regex(r'(.*)/s04-alignment.dir/(.*)/(isoseq)/salmon/.*/quant.sf'),
-# 		 r'\1/s05-expression.dir/\2/\3/\2_\3-sample_metadata.txt')
+# @collate('arion/illumina/s04-alignment.dir/*/*/RSEM/results/*/*.isoforms.results',
+@collate(runRsem,
+		 regex(r'(.*)/s04-alignment.dir/(.*)/(.*)/RSEM/.*/.*.isoforms.results'),
+		 r'\1/s05-expression.dir/\2/\3/\2_\3-sample_metadata.txt')
 
-# def prepareSampleMetadata(infiles, outfile):
+def prepareSampleMetadata(infiles, outfile):
 	
-# 	# Create directory
-# 	outdir = os.path.dirname(outfile)
-# 	if not os.path.exists(outdir):
-# 		os.makedirs(outdir)
+	# Create directory
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
 
-# 	# Prepare dict
-# 	sample_dict = [{'files': x, 'names': x.split('/')[-2]} for x in infiles]
+	# Prepare dict
+	sample_dict = [{'files': x, 'names': x.split('/')[-2]} for x in infiles]
 
-# 	# Convert to dataframe
-# 	sample_dataframe = pd.DataFrame(sample_dict)
+	# Convert to dataframe
+	sample_dataframe = pd.DataFrame(sample_dict)
 
-# 	# Add more columns
-# 	sample_dataframe['organism'] = [x.split('_')[0] for x in sample_dataframe['names']]
-# 	sample_dataframe['cell_type'] = [x.split('_')[1].replace('2PN', '1C') for x in sample_dataframe['names']]
+	# Add more columns
+	organism = outfile.split('/')[-3]
+	sample_dataframe['organism'] = [organism for x in sample_dataframe['names']]
+	sample_dataframe['cell_type'] = [x.split('_')[1].replace('2PN', '1C') for x in sample_dataframe['names']]
 
-# 	# Read metadata
-# 	organism = outfile.split('/')[-3]
-# 	metadata_dataframe = pd.read_csv(organism_metadata[organism]).query('Platform == "ILLUMINA"').rename(columns={'sample_name': 'names'}).drop(['Platform', 'count'], axis=1)
+	# Read metadata
+	metadata_dataframe = pd.read_csv(organism_metadata[organism]).query('Platform == "ILLUMINA"').rename(columns={'sample_name': 'names'}).drop(['Platform', 'count'], axis=1)
 
-# 	# Fix organism specific columns
-# 	if organism == 'human':
-# 		metadata_dataframe = metadata_dataframe.drop(['Group', 'batch'], axis=1)
-# 		sample_dataframe['batch'] = [x.split('_')[2] for x in sample_dataframe['names']]
-# 	elif organism == 'mouse':
-# 		metadata_dataframe['strain'] = [x.replace(' ', '').replace('/', '_').replace('x', '_') for x in metadata_dataframe['Strain']]
-# 		metadata_dataframe = metadata_dataframe.drop(['Run', 'Cell_type', 'sample_id', 'Strain'], axis=1)
-# 		sample_dataframe['replicate'] = [x.split('_')[-1] for x in sample_dataframe['names']]
+	# Fix organism specific columns
+	if organism == 'human':
+		metadata_dataframe = metadata_dataframe.drop(['Group', 'batch'], axis=1)
+		sample_dataframe['batch'] = [x.split('_')[2] for x in sample_dataframe['names']]
+	elif organism == 'mouse':
+		metadata_dataframe['strain'] = [x.replace(' ', '').replace('/', '_').replace('x', '_') for x in metadata_dataframe['Strain']]
+		metadata_dataframe = metadata_dataframe.drop(['Run', 'Cell_type', 'sample_id', 'Strain'], axis=1)
+		sample_dataframe['replicate'] = [x.split('_')[-1] for x in sample_dataframe['names']]
 
-# 	# Merge
-# 	merged_dataframe = sample_dataframe.merge(metadata_dataframe, on='names')
+	# Merge
+	merged_dataframe = sample_dataframe.merge(metadata_dataframe, on='names')
 
-# 	# Remove outliers
-# 	outlier_samples = ['human_2C_B3_3', 'human_2PN_B3_6']
-# 	merged_dataframe = merged_dataframe[~merged_dataframe['names'].isin(outlier_samples)]
+	# Write
+	merged_dataframe.to_csv(outfile, sep='\t', index=False)
 
-# 	# Write
-# 	merged_dataframe.to_csv(outfile, sep='\t', index=False)
+#############################################
+########## 2. Aggregate
+#############################################
 
-# #############################################
-# ########## 2. Aggregate
-# #############################################
+@follows(filterGTF)
 
-# @follows(buildSalmonIndex)
+# @transform('arion/illumina/s05-expression.dir/*/*/*-sample_metadata.txt',
+@transform(prepareSampleMetadata,
+		   regex(r'(.*)/(s05-expression.dir)/(.*)/(.*)/.*-sample_metadata.txt'),
+		   add_inputs(r'\1/s04-alignment.dir/\3/\4/gtf/*.gtf'),
+		   r'\1/\2/\3/\4/\3_\4-counts.rda')
 
-# @transform(prepareSampleMetadata,
-# 		   regex(r'(.*)/(s05-expression.dir)/(.*)/(.*)/.*-sample_metadata.txt'),
-# 		   add_inputs(r'\1/s03-indices.dir/\3/\4/salmon'),
-# 		   r'\1/\2/\3/\4/\3_\4-counts.rda')
+def aggregateCounts(infiles, outfile):
 
-# def aggregateCounts(infiles, outfile):
+	# Run
+	run_r_job('aggregate_counts', infiles, outfile, conda_env='env', run_locally=False, W='00:30', GB=30, n=1, wait=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
-# 	# Add annotations
-# 	infiles = list(infiles)
-
-# 	# Get organism and reference
-# 	organism = outfile.split('/')[-3]
-# 	source = outfile.split('/')[-2]
-
-# 	# Add FASTA and GTF
-# 	if source == 'isoseq':
-# 		infiles.append(reference_dict[organism][source]['transcript_fasta'])
-# 		infiles.append(reference_dict[organism][source]['gtf'])
-# 		infiles.append(reference_dict[organism][source]['summary_file'])
-
-# 	# Run
-# 	run_r_job('aggregate_counts', infiles, outfile, run_locally=False, W='00:30', GB=30, n=1, wait=True, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
-
-# # mv /hpc/users/torred23/.cache/BiocFileCache /hpc/users/torred23/.cache/BiocFileCache2
-# # ls /hpc/users/torred23/.cache/
+# find arion/illumina/s05-expression.dir/*/all -name "*counts*" | xargs rm
 
 # #############################################
 # ########## 3. Transcript TPM
@@ -813,35 +668,35 @@ def createBigWig(infile, outfile):
 # 	# Run
 # 	run_r_job('get_transcript_tpm', infile, outfile, run_locally=False, ow=False)
 
-# #######################################################
-# #######################################################
-# ########## S5. Differential expression
-# #######################################################
-# #######################################################
+#######################################################
+#######################################################
+########## S5. Differential expression
+#######################################################
+#######################################################
 
-# #############################################
-# ########## 1. DESeq2
-# #############################################
+#############################################
+########## 1. DESeq2
+#############################################
 
-# # @follows(aggregateCounts)
+# @follows(aggregateCounts)
 
-# @subdivide('arion/illumina/s05-expression.dir/*/*/*-counts.rda',
-# 		   regex(r'(.*)/s05-expression.dir/(.*)/(.*)/.*-counts.rda'),
-# 		   add_inputs(comparison_file),
-# 		   r'\1/s06-differential_expression.dir/\2/\3/\2_\3-*-deseq.tsv',
-# 		   r'\1/s06-differential_expression.dir/\2/\3/\2_\3-{comparison[1]}_vs_{comparison[2]}-{feature}-deseq.tsv')
+@subdivide('arion/illumina/s05-expression.dir/*/*/*-counts.rda',
+		   regex(r'(.*)/s05-expression.dir/(.*)/(.*)/.*-counts.rda'),
+		   add_inputs(comparison_file),
+		   r'\1/s06-differential_expression.dir/\2/\3/\2_\3-*-deseq.tsv',
+		   r'\1/s06-differential_expression.dir/\2/\3/\2_\3-{comparison[1]}_vs_{comparison[2]}-{feature}-deseq.tsv')
 
-# def runDESeq2(infiles, outfiles, outfileRoot):
+def runDESeq2(infiles, outfiles, outfileRoot):
 
-# 	# Loop
-# 	for feature in ['gene', 'transcript']:
+	# Loop
+	for feature in ['gene', 'transcript']:
 
-# 		# Get info
-# 		logname = os.path.join(os.path.dirname(outfileRoot), 'deseq-'+feature+'.log')
-# 		jobname = '_'.join(logname[:-len('.log')].split('/')[-3:])
+		# Get info
+		logname = os.path.join(os.path.dirname(outfileRoot), 'deseq-'+feature+'.log')
+		jobname = '_'.join(logname[:-len('.log')].split('/')[-3:])
 		
-# 		# Run
-# 		run_r_job('run_deseq2', infiles, outfileRoot, conda_env='env', W='24:00', GB=25, n=1, additional_params=feature, ow=False, stdout=logname, jobname=jobname)
+		# Run
+		run_r_job('run_deseq2', infiles, outfileRoot, conda_env='env', W='24:00', GB=25, n=1, additional_params=feature, ow=False, stdout=logname, jobname=jobname)
 
 # #############################################
 # ########## 2. Excel
