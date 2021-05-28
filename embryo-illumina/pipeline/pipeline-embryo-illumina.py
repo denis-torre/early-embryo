@@ -212,7 +212,7 @@ def trimIlluminaAdapters(infiles, outdir):
 	# Run
 	run_job(cmd_str, outdir, modules=['trim_galore/0.6.6'], W='06:00', GB=6, n=6, stdout=os.path.join(outdir, 'job.log'), stderr=os.path.join(outdir, 'job.err'))
 
-# find arion/illumina/s01-fastq.dir/*/trimmed -name "job.log" | jsc
+# find arion/atacseq/s01-fastq.dir/*/trimmed -name "job.log" | jsc
 
 #######################################################
 #######################################################
