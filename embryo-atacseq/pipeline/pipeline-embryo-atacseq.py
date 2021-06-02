@@ -260,7 +260,7 @@ def runBowtie(infiles, outfile):
 # find arion/atacseq/s03-alignment.dir -name "*.log" | js
 
 #############################################
-########## 2. Filter
+########## 3. Filter
 #############################################
 # Removes duplicates, and any reads not mapping to chromosomes 1-19, X, Y.
 # "[XS] == null" - multimappers
@@ -287,7 +287,7 @@ def filterBam(infile, outfile):
 	run_job(cmd_str, outfile, W='03:00', n=5, GB=5, modules=['samtools/1.9', 'sambamba/0.5.6'], print_outfile=False)
 
 #############################################
-########## 3. Create BigWig
+########## 4. Create BigWig
 #############################################
 
 @transform((runBowtie, filterBam),
@@ -302,6 +302,155 @@ def createBigWig(infiles, outfile):
 
 	# Run
 	run_job(cmd_str, outfile, conda_env='env', W='06:00', n=8, GB=4, print_outfile=False)
+
+#############################################
+########## 5. Sort BAM by QNAME (for Genrich)
+#############################################
+
+@transform(filterBam,
+		   suffix('.bam'),
+		   '_nsorted.bam')
+
+def sortBAM(infile, outfile):
+
+	# Command
+	cmd_str = ''' samtools sort -n --threads 30 -o {outfile} {infile}'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, modules=['samtools/1.11'], W='02:00', n=6, GB=6, print_outfile=False)
+
+#######################################################
+#######################################################
+########## S4. Peaks
+#######################################################
+#######################################################
+
+#############################################
+########## 1. MACS2
+#############################################
+
+@collate(filterBam,
+		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/(.*)_Rep.*/.*_filtered.bam'),
+		 r'\1/s04-peaks.dir/\2/macs2/\3/\3_peaks.xls')
+
+def runMacs2(infiles, outfile):
+
+	# Infiles
+	infiles_str = ' '.join(infiles)
+	basename = outfile.replace('_peaks.xls', '')
+	organism = outfile.split('/')[-4].replace('human', 'hs').replace('mouse', 'mm')
+
+	# Command
+	cmd_str = ''' macs2 callpeak \
+		-t {infiles_str}\
+		-f BAM \
+		--nomodel \
+		--nolambda \
+		--extsize 250 \
+		-q 0.01 \
+		-n {basename} \
+		-g {organism}'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, modules=['macs/2.1.0'], W='06:00', n=1, GB=30, print_cmd=False, stdout=outfile.replace('.xls', '.log'), stderr=outfile.replace('.xls', '.err'))
+
+#############################################
+########## 2. gEnrich
+#############################################
+
+@collate(sortBAM,
+		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/(.*)_Rep.*/.*_filtered_nsorted.bam'),
+		 r'\1/s04-peaks.dir/\2/genrich/\3/\3-genrich.narrowPeak')
+
+def runGenrich(infiles, outfile):
+
+	# Infiles
+	bam_str = ','.join(infiles)
+	basename = outfile.replace('.narrowPeak', '')
+
+	# Command
+	cmd_str = ''' Genrich -t {bam_str} \
+		-o {outfile} \
+		-q 0.01 \
+		-j -y -v '''.format(**locals())
+		# -b {basename}.bed \
+		# -R {basename}.pcr_duplicates.txt \
+		# -r
+
+	# Run
+	run_job(cmd_str, outfile, modules=['genrich/0.6'], W='03:00', n=1, GB=30, print_cmd=False, stdout=outfile.replace('.narrowPeak', '.log'), stderr=outfile.replace('.narrowPeak', '.err'))
+
+#######################################################
+#######################################################
+########## S5. TSS coverage
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Get TSS BED
+#############################################
+
+def transcriptJobs():
+	for organism, reference_info in reference_dict.items():
+		infile = reference_info['filtered_gtf']
+		outfile = 'arion/atacseq/s05-tss_coverage.dir/{organism}/{organism}-tss.bed'.format(**locals())
+		yield [infile, outfile]
+
+@files(transcriptJobs)
+
+def getTssRange(infile, outfile):
+
+	# Run
+	run_r_job('get_tss', infile, outfile, run_locally=True)#, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 2. Get counts
+#############################################
+
+# @follows(filterBam, getTssRange)
+
+@collate('arion/atacseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered.bam',
+		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/.*/.*.bam'),
+		 add_inputs(r'\1/s05-tss_coverage.dir/\2/\2-tss.bed'),
+		 r'\1/s05-tss_coverage.dir/\2/\2-tss_coverage.tsv')
+
+def getTssCoverage(infiles, outfile):
+
+	# Split files
+	bam_files = [x[0] for x in infiles]
+	bed_file = infiles[0][1]
+
+	# Prepare
+	bam_str = ' '.join(bam_files)
+	bam_str_tsv = '\t'.join([x.split('/')[-2] for x in bam_files])
+
+	# Command
+	cmd_str = ''' echo "chr\tstart\tend\ttranscript_id\tscore\tstrand\t{bam_str_tsv}" > {outfile} && bedtools multicov -bams {bam_str} -bed {bed_file} >> {outfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='01:00', n=1, GB=25)#, print_cmd=False, stdout=outfile.replace('.narrowPeak', '.log'), stderr=outfile.replace('.narrowPeak', '.err'))
+
+	# # Run
+	# run_r_job('get_tss_coverage', bam_files, outfile, additional_params=bed_file, run_locally=True)#conda_env='env', modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 3. Get peaks
+#############################################
+
+# @follows(runGenrich, getTssRange)
+
+@transform('arion/atacseq/s04-peaks.dir/human/genrich/*/*-genrich.narrowPeak',
+		   regex(r'(.*)/s04-peaks.dir/(.*)/genrich/(.*)/.*.narrowPeak'),
+		   add_inputs(r'\1/s05-tss_coverage.dir/\2/\2-tss.bed'),
+		   r'\1/s05-tss_coverage.dir/\2/peaks/\2-\3-tss_peaks_intersect.bed')
+
+def getTssPeaks(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bedtools intersect -wa -a {infiles[1]} -b {infiles[0]} > {outfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:30', n=1, GB=25, print_cmd=False)#, stdout=outfile.replace('.narrowPeak', '.log'), stderr=outfile.replace('.narrowPeak', '.err'))
 
 #######################################################
 #######################################################
@@ -466,6 +615,111 @@ def plotIsoformProfile2(infiles, outfile):
 		-out {outfile}
 	'''.format(**locals())
 		# --colors "#6BAED6" "#78C679" "#EE6A50" "#66C2A4" "#E9967A"\
+
+	# Run
+	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=5, print_cmd=False, ow=True, run_locally=True)
+
+#############################################
+#############################################
+########## 2. TSS heatmap
+#############################################
+#############################################
+
+#############################################
+########## 1.1 Split TSS by isoform class
+#############################################
+
+def tssJobs():
+	for organism, reference_info in reference_dict.items():
+		infiles = list(reference_info.values())
+		outfile = 'arion/atacseq/summary_plots.dir/tss_heatmaps/{organism}/bed_5k/Known_TSS.bed'.format(**locals())
+		yield [infiles, outfile]
+
+@files(tssJobs)
+
+def splitTSS(infiles, outfile):
+
+	# Run
+	run_r_job('split_tss', infiles, outfile, run_locally=True)#conda_env='env', modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 1.2 Matrix
+#############################################
+
+# @follows(createBigWig, splitGTF)
+
+@collate('arion/atacseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered.bw',
+		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/.*/.*.bw'),
+		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps/\2/bed_5k/*.bed'),
+		 r'\1/summary_plots.dir/tss_heatmaps/\2/\2-matrix_5k.gz')
+
+def computeTssMatrix(infiles, outfile):
+
+	# Get order
+	order_dict = {
+		'bigwig': {'1C': 1, '2C': 2, '4C': 3, '8C': 4, 'morula': 5, 'ICM': 6, 'TE': 7},
+		'bed': {'Known_TSS': 1, 'Novel_TSS': 2, 'Antisense_TSS': 3, 'Intergenic_TSS': 4}
+	}
+
+	# Split
+	bigwigs = [x[0] for x in infiles]
+	bigwigs = [x for x in bigwigs if 'Rep1' in x]
+	beds = infiles[0][1:]
+
+	# Get bigwig order
+	bigwig_str = ' '.join(pd.DataFrame({
+		'bigwig': bigwigs,
+		'order': [order_dict['bigwig'][os.path.basename(x).split('_')[1]] for x in bigwigs]
+	}).sort_values('order')['bigwig'])
+
+	# Get GTF order
+	bed_str = ' '.join(pd.DataFrame({
+		'bed': beds,
+		'order': [order_dict['bed'][os.path.basename(x).split('.')[0]] for x in beds]
+	}).sort_values('order')['bed'])
+
+	# Command
+	cmd_str = ''' computeMatrix reference-point -S {bigwig_str} \
+					-R {bed_str} \
+					--referencePoint center \
+					--beforeRegionStartLength 500 \
+					--afterRegionStartLength 500 \
+					--numberOfProcessors 48 \
+					--skipZeros -o {outfile}
+	'''.format(**locals())
+
+	# Run
+	# run_job(cmd_str, outfile, conda_env='env', W='10:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
+
+	# Write samples
+	bigwig_names = [x.split('/')[-2].replace('_', ' ') for x in bigwig_str.split(' ')]
+	jsonfile = outfile.replace('.gz', '.json')
+	if not os.path.exists(jsonfile):
+		with open(jsonfile, 'w') as openfile:
+			openfile.write(json.dumps(bigwig_names))
+
+#############################################
+########## 1.3 Plot
+#############################################
+
+@transform(computeTssMatrix,
+		   regex(r'(.*)_(.*).gz'),
+		   add_inputs(r'\1_\2.json'),
+		   r'\1_heatmap_\2.png')
+
+def plotTssHeatmap(infiles, outfile):
+
+	# Read JSON
+	with open(infiles[1]) as openfile:
+		samples_label = '" "'.join(json.load(openfile))
+
+	# Command
+	cmd_str = ''' plotHeatmap -m {infiles[0]} \
+					--samplesLabel "{samples_label}" \
+					--heatmapWidth 7 \
+					--refPointLabel TSS \
+					-out {outfile}
+	'''.format(**locals())
 
 	# Run
 	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=5, print_cmd=False, ow=True, run_locally=True)
