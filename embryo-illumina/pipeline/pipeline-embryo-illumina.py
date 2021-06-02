@@ -1035,48 +1035,48 @@ def createRmatsSummary(infiles, outfile):
 ########## 1. GO
 #############################################
 
-# # @follows(runDESeq2)
+# @follows(runDESeq2)
 
-# @transform('arion/illumina/s06-differential_expression.dir/*/isoseq/*-gene-deseq.tsv',
-# 		   regex(r'(.*)/s06-differential_expression.dir/(.*)/isoseq/(.*)-gene-deseq.tsv'),
-# 		   r'\1/s09-enrichment.dir/\2/\3-go_enrichment.tsv')
+@transform('arion/illumina/s06-differential_expression.dir/*/all/*-gene-deseq.tsv',
+		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-gene-deseq.tsv'),
+		   r'\1/s07-enrichment.dir/\2/go/\3-go_enrichment.tsv')
 
-# def runGoEnrichment(infile, outfile):
+def runGoEnrichment(infile, outfile):
 
-# 	# Run
-# 	run_r_job('run_go_enrichment', infile, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+	# Run
+	run_r_job('run_go_enrichment', infile, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
-# #############################################
-# ########## 2. Domain
-# #############################################
+#############################################
+########## 2. Domain
+#############################################
 
-# # @follows(runDESeq2)
+# @follows(runDESeq2)
 
-# @transform('arion/illumina/s06-differential_expression.dir/*/isoseq/*-transcript-deseq.tsv',
-# 		   regex(r'(.*)/s06-differential_expression.dir/(.*)/isoseq/(.*)-transcript-deseq.tsv'),
-# 		   add_inputs(r'arion/isoseq/s07-pfam.dir/\2/\2-translated_pfam.tsv'),
-# 		   r'\1/s09-enrichment.dir/\2/\3-domain_enrichment.tsv')
+@transform('arion/illumina/s06-differential_expression.dir/*/all/*-transcript-deseq.tsv',
+		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-transcript-deseq.tsv'),
+		   add_inputs(r'arion/isoseq/s07-pfam.dir/\2/\2-translated_pfam.tsv'),
+		   r'\1/s07-enrichment.dir/\2/domain/\3-domain_enrichment.tsv')
 
-# def runDomainEnrichment(infiles, outfile):
+def runDomainEnrichment(infiles, outfile):
 
-# 	# Run
-# 	run_r_job('run_domain_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+	# Run
+	run_r_job('run_domain_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 # #############################################
 # ########## 3. Repeats
 # #############################################
 
-# # @follows(runDESeq2)
+# @follows(runDESeq2)
 
-# @transform('arion/illumina/s06-differential_expression.dir/*/isoseq/*-transcript-deseq.tsv',
-# 		   regex(r'(.*)/s06-differential_expression.dir/(.*)/isoseq/(.*)-transcript-deseq.tsv'),
-# 		   add_inputs(r'arion/isoseq/s08-repeatmasker.dir/\2/\2*_repeatmasker.tsv'),
-# 		   r'\1/s09-enrichment.dir/\2/isoseq/\3-repeat_enrichment.tsv')
+@transform('arion/illumina/s06-differential_expression.dir/*/all/*-transcript-deseq.tsv',
+		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-transcript-deseq.tsv'),
+		   add_inputs(r'arion/isoseq/s08-repeatmasker.dir/\2/*_repeatmasker.tsv'),
+		   r'\1/s07-enrichment.dir/\2/repeat/\3-repeat_enrichment.tsv')
 
-# def runRepeatEnrichment(infiles, outfile):
+def runRepeatEnrichment(infiles, outfile):
 
-# 	# Run
-# 	run_r_job('run_repeat_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+	# Run
+	run_r_job('run_repeat_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 # #######################################################
 # #######################################################
