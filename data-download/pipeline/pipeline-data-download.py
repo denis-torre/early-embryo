@@ -215,6 +215,119 @@ def downloadFASTQ(infile, outfiles, outfileRoot):
 
 #######################################################
 #######################################################
+########## S. Xia
+#######################################################
+
+#############################################
+########## 1. Get SRP IDs
+#############################################
+# SRP tables looked inconsistent and lacked sample names
+# Manually selected samples in arion/datasets/xia/xia-samples_v2.csv from GEO 
+# at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE124718 on 2021/05/27
+
+@transform('arion/datasets/xia/xia-samples_v2.csv',
+		   suffix('.csv'),
+		   '_metadata.tsv')
+
+def convertSRX(infile, outfile):
+
+	# Read
+	sample_dataframe = pd.read_csv(infile)
+
+	# Get IDs
+	gsm_ids = ' '.join(sample_dataframe['geo_sample_id'])
+
+	# Command
+	os.system('pysradb gsm-to-srx --detailed --saveto {outfile} {gsm_ids}'.format(**locals()))
+
+#############################################
+########## 2. SRA
+#############################################
+
+# scr
+# ml sratoolkit/2.10.5 
+# fasterq-dump -e 6 -p --split-files SRR9131738
+
+@subdivide(convertSRX,
+		   regex(r'(.*)/.*.tsv'),
+		   add_inputs(),
+		   r'\1/rawdata/*.fastq.gz',
+		   r'\1/rawdata/{experiment_accession}*.fastq.gz')
+
+def downloadSRX(infile, outfiles, outfileRoot):
+
+	# Read metadata file
+	metadata_dataframe = pd.read_table(infile)
+
+	# Loop
+	for index, rowData in metadata_dataframe.iterrows():
+
+		# Get platform
+		experiment_accession = rowData['experiment_accession']
+
+		# Get outdir
+		outfile_pattern = outfileRoot.format(**locals())
+		outdir = os.path.dirname(outfile_pattern)
+
+		print(outfile_pattern)
+
+		# # Run
+		# if len(glob.glob(outfile_pattern)) == 0:
+			
+		# 	# Create directory
+		# 	if not os.path.exists(outdir):
+		# 		os.makedirs(outdir)
+
+		# 	# Download
+		# 	print('Doing {outfile_pattern}...'.format(**locals()))
+		# 	os.system('ml sratoolkit/2.10.5 && cd {outdir} && fasterq-dump -e 6 -p --split-files {run}'.format(**locals())) # && gzip {run}*.fastq
+
+		# 	# Get files
+		# 	uncompressed_files = glob.glob(outfile_pattern.replace('.gz', ''))
+
+		# 	# Loop
+		# 	for uncompressed_file in uncompressed_files:
+
+		# 		# Compress
+		# 		cmd_str = 'gzip {uncompressed_file}'.format(**locals())
+
+		# 		# Run
+		# 		outfile = uncompressed_file+'.gz'
+		# 		run_job(cmd_str, outfile, W='03:00', GB=6, n=1)
+
+#######################################################
+#######################################################
+########## S. Evolutionary conservation
+#######################################################
+#######################################################
+
+#############################################
+########## 1. PhyloP
+#############################################
+
+def phylopJobs():
+	bw_files = ['http://hgdownload.cse.ucsc.edu/goldenpath/mm10/phyloP60way/mm10.60way.phyloP60way.bw', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/phyloP100way/hg38.phyloP100way.bw']
+	for url_path in bw_files:
+		filename = os.path.basename(url_path)
+		genome = filename.split('.')[0]
+		organism = genome.replace('mm10', 'mouse').replace('hg38', 'human')
+		outfile = 'arion/datasets/phylop/{organism}/{filename}'.format(**locals())
+		yield [url_path, outfile]
+
+@files(phylopJobs)
+
+def downloadPhyloP(url_path, outfile):
+
+	# Outdir
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Download
+	os.system('cd {outdir} && wget {url_path}'.format(**locals()))
+
+#######################################################
+#######################################################
 ########## S. Xue
 #######################################################
 #######################################################
