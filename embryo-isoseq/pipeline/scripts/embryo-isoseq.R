@@ -562,6 +562,47 @@ merge_repeatmasker <- function(infiles, outfile) {
 
 #######################################################
 #######################################################
+########## S9. PhyloP
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Convert GTF
+#############################################
+
+gtf_to_bed <- function(infile, outfile) {
+    
+    # Read
+    gtf <- rtracklayer::readGFF(infile)
+
+    # Subset
+    bed_dataframe <- gtf %>% filter(type=='exon') %>% mutate(seqid=paste0('chr', seqid), start=format(start-1, scientific=FALSE), end=format(end, scientific=FALSE), score=0, transcript_exon_id=paste0(transcript_id, '_exon', exon_number)) %>% select(seqid, start, end, transcript_exon_id, score, strand)
+
+    # Write
+    fwrite(bed_dataframe, file=outfile, sep='\t', col.names=FALSE)
+
+}
+
+#############################################
+########## 2. Convert GTF
+#############################################
+
+merge_phylo_scores <- function(infiles, outfile) {
+    
+    # Read results
+    phylop_dataframe <- lapply(infiles, fread) %>% bind_rows
+    colnames(phylop_dataframe) <- c('transcript_exon_id', 'size', 'covered', 'sum', 'mean0', 'mean')
+
+    # Get transcript summary
+    summary_dataframe <- phylop_dataframe %>% mutate(transcript_id=gsub('(.*)_.*', '\\1', transcript_exon_id)) %>% group_by(transcript_id) %>% summarize(size=sum(size), covered=sum(covered), score_sum=sum(sum), score_mean0=mean(mean0), score_mean=mean(mean))
+
+    # Write
+    fwrite(summary_dataframe, file=outfile, sep='\t')
+
+}
+
+#######################################################
+#######################################################
 ########## Summary
 #######################################################
 #######################################################

@@ -1130,6 +1130,68 @@ def getTranscriptSummary(infiles, outfile):
 	# Run
 	run_r_job('get_transcript_summary', infiles, outfile, conda_env='env', W='00:15', GB=10, n=1)
 
+#######################################################
+#######################################################
+########## S9. PhyloP
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Convert GTF
+#############################################
+
+# @follows(splitGTF)
+
+# @transform('arion/isoseq/s06-cpat.dir/human/gtf/split/*talon_01.gtf',
+@transform('arion/isoseq/s06-cpat.dir/*/gtf/split/*talon_??.gtf',
+		   regex(r'(.*)/s06-cpat.dir/(.*)/gtf/split/(.*).gtf'),
+		   r'\1/s09-phylop.dir/\2/bed/\3.bed')
+
+def gtfToBed(infile, outfile):
+
+	# Run
+	run_r_job('gtf_to_bed', infile, outfile, conda_env='env', W='00:05', GB=10, n=1, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
+
+# find arion/isoseq/s09-phylop.dir/*/bed -name "*.log" | jsc
+
+#############################################
+########## 2. Convert GTF
+#############################################
+
+# @follows(getTalonGTF)
+
+@transform(gtfToBed,
+		   regex(r'(.*)/(.*)/(.*)/bed/(.*).bed'),
+		   add_inputs(r'arion/datasets/phylop/\3/*.bw'),
+		   r'\1/\2/\3/split/\4_phyloP.tsv')
+
+def getPhyloScores(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bigWigAverageOverBed {infiles[1]} {infiles[0]} {outfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:15', GB=1, n=15, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# find arion/isoseq/s09-phylop.dir/*/split -name "*.log" | jsc
+# find arion/isoseq/s09-phylop.dir/*/split -name "*.err" | lr
+
+#############################################
+########## 3. Merge
+#############################################
+
+@collate(getPhyloScores,
+# @collate('arion/isoseq/s09-phylop.dir/*/split/*_phyloP.tsv',
+		 regex(r'(.*)/(.*)/split/.*.tsv'),
+		 r'\1/\2/\2-phyloP.tsv')
+
+def mergePhyloScores(infiles, outfile):
+
+	# Run
+	run_r_job('merge_phylo_scores', infiles, outfile, conda_env='env', W='00:05', GB=10, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# bigWigAverageOverBed arion/datasets/phylop/human/hg38.phyloP100way.bw test.bed test.tsv
+
 # #######################################################
 # #######################################################
 # ########## S9. CPAT
