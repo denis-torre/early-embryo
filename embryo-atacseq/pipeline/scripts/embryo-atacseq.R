@@ -56,7 +56,7 @@ split_gtf <- function(infiles, outfile) {
         gtf_outfile <- glue('{outdir}/{transcript_class}.gtf')
         
         # Export
-        rtracklayer::export(gtf_split[[transcript_class]] %>% head(5000), gtf_outfile, format='gtf')
+        rtracklayer::export(gtf_split[[transcript_class]], gtf_outfile, format='gtf') # %>% head(5000)
         
     }
 
@@ -144,9 +144,9 @@ split_tss <- function(infiles, outfile) {
             end=start+2, score=0) %>% select(chr, start, end, score, transcript_types, strand)
 
         # Subset
-        nr_rows <- min(nrow(bed_dataframe), 5000)
-        row_idx <- sample(1:nrow(bed_dataframe), nr_rows)
-        bed_dataframe <- as.data.frame(bed_dataframe)[row_idx,]
+        # nr_rows <- min(nrow(bed_dataframe), 500)
+        # row_idx <- sample(1:nrow(bed_dataframe), nr_rows)
+        # bed_dataframe <- as.data.frame(bed_dataframe)[row_idx,]
         
         # Get outfile
         bed_outfile <- glue('{outdir}/{tss_class}.bed')

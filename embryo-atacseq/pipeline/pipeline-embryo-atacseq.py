@@ -632,7 +632,7 @@ def plotIsoformProfile2(infiles, outfile):
 def tssJobs():
 	for organism, reference_info in reference_dict.items():
 		infiles = list(reference_info.values())
-		outfile = 'arion/atacseq/summary_plots.dir/tss_heatmaps/{organism}/bed_5k/Known_TSS.bed'.format(**locals())
+		outfile = 'arion/atacseq/summary_plots.dir/tss_heatmaps_all/{organism}/bed/Known_TSS.bed'.format(**locals())
 		yield [infiles, outfile]
 
 @files(tssJobs)
@@ -650,8 +650,8 @@ def splitTSS(infiles, outfile):
 
 @collate('arion/atacseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered.bw',
 		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/.*/.*.bw'),
-		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps/\2/bed_5k/*.bed'),
-		 r'\1/summary_plots.dir/tss_heatmaps/\2/\2-matrix_5k.gz')
+		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all/\2/bed/*.bed'),
+		 r'\1/summary_plots.dir/tss_heatmaps_all/\2/\2-matrix.gz')
 
 def computeTssMatrix(infiles, outfile):
 
@@ -689,7 +689,7 @@ def computeTssMatrix(infiles, outfile):
 	'''.format(**locals())
 
 	# Run
-	# run_job(cmd_str, outfile, conda_env='env', W='10:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
+	run_job(cmd_str, outfile, conda_env='env', W='10:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
 
 	# Write samples
 	bigwig_names = [x.split('/')[-2].replace('_', ' ') for x in bigwig_str.split(' ')]
@@ -698,14 +698,64 @@ def computeTssMatrix(infiles, outfile):
 		with open(jsonfile, 'w') as openfile:
 			openfile.write(json.dumps(bigwig_names))
 
+# @collate('arion/atacseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered.bw',
+# 		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/.*/.*.bw'),
+# 		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all/\2/bed/*.bed'),
+# 		 r'\1/summary_plots.dir/tss_heatmaps_all/\2/\2-matrix.gz')
+
+# def computeTssMatrix(infiles, outfile):
+
+# 	# Get order
+# 	order_dict = {
+# 		'bigwig': {'1C': 1, '2C': 2, '4C': 3, '8C': 4, 'morula': 5, 'ICM': 6, 'TE': 7},
+# 		'bed': {'Known_TSS': 1, 'Novel_TSS': 2, 'Antisense_TSS': 3, 'Intergenic_TSS': 4}
+# 	}
+
+# 	# Split
+# 	bigwigs = [x[0] for x in infiles]
+# 	bigwigs = [x for x in bigwigs if 'Rep1' in x]
+# 	beds = infiles[0][1:]
+
+# 	# Get bigwig order
+# 	bigwig_str = ' '.join(pd.DataFrame({
+# 		'bigwig': bigwigs,
+# 		'order': [order_dict['bigwig'][os.path.basename(x).split('_')[1]] for x in bigwigs]
+# 	}).sort_values('order')['bigwig'])
+
+# 	# Get GTF order
+# 	bed_str = ' '.join(pd.DataFrame({
+# 		'bed': beds,
+# 		'order': [order_dict['bed'][os.path.basename(x).split('.')[0]] for x in beds]
+# 	}).sort_values('order')['bed'])
+
+# 	# Command
+# 	cmd_str = ''' computeMatrix reference-point -S {bigwig_str} \
+# 					-R {bed_str} \
+# 					--referencePoint center \
+# 					--beforeRegionStartLength 500 \
+# 					--afterRegionStartLength 500 \
+# 					--numberOfProcessors 48 \
+# 					--skipZeros -o {outfile}
+# 	'''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, conda_env='env', W='02:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
+
+# 	# Write samples
+# 	bigwig_names = [x.split('/')[-2].replace('_', ' ') for x in bigwig_str.split(' ')]
+# 	jsonfile = outfile.replace('.gz', '.json')
+# 	if not os.path.exists(jsonfile):
+# 		with open(jsonfile, 'w') as openfile:
+# 			openfile.write(json.dumps(bigwig_names))
+
 #############################################
 ########## 1.3 Plot
 #############################################
 
 @transform(computeTssMatrix,
-		   regex(r'(.*)_(.*).gz'),
-		   add_inputs(r'\1_\2.json'),
-		   r'\1_heatmap_\2.png')
+		   regex(r'(.*).gz'),
+		   add_inputs(r'\1.json'),
+		   r'\1.png')
 
 def plotTssHeatmap(infiles, outfile):
 
@@ -717,12 +767,153 @@ def plotTssHeatmap(infiles, outfile):
 	cmd_str = ''' plotHeatmap -m {infiles[0]} \
 					--samplesLabel "{samples_label}" \
 					--heatmapWidth 7 \
+					--yMin 0 \
+					--yMax 60 30 80 120 150 50 60 \
+					--zMax 60 30 80 120 150 50 60 \
 					--refPointLabel TSS \
 					-out {outfile}
 	'''.format(**locals())
 
 	# Run
 	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=5, print_cmd=False, ow=True, run_locally=True)
+
+#############################################
+#############################################
+########## 3. PhyloP heatmap
+#############################################
+#############################################
+
+#############################################
+########## 1.1 Split GTF by isoform class
+#############################################
+
+def splitJobs():
+	for organism, reference_info in reference_dict.items():
+		infiles = list(reference_info.values())
+		outfile = 'arion/atacseq/summary_plots.dir/phylo_heatmaps_all/{organism}/gtf/Known.gtf'.format(**locals())
+		yield [infiles, outfile]
+
+@files(splitJobs)
+
+def splitPhyloGTF(infiles, outfile):
+
+	# Run
+	run_r_job('split_gtf', infiles, outfile, run_locally=True)#conda_env='env', modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 1.2 Matrix
+#############################################
+
+# @follows(createBigWig, splitGTF)
+
+@collate('arion/datasets/phylop/human/*.bw',
+		 regex(r'.*/phylop/(.*)/.*.bw'),
+		 add_inputs(r'arion/atacseq/summary_plots.dir/phylo_heatmaps_all/\1/gtf/*.gtf'),
+		 r'arion/atacseq/summary_plots.dir/phylo_heatmaps_all/\1/\1-matrix.gz')
+
+def computePhyloMatrix(infiles, outfile):
+
+	# Get order
+	order_dict = {
+		'gtf': {'Known': 1, 'NIC': 2, 'NNC': 3, 'Antisense': 4, 'Intergenic': 5}
+	}
+
+	# Split
+	gtfs = infiles[0][1:]
+
+	# Get GTF order
+	gtf_str = ' '.join(pd.DataFrame({
+		'gtf': gtfs,
+		'order': [order_dict['gtf'][os.path.basename(x).split('.')[0]] for x in gtfs]
+	}).sort_values('order')['gtf'])
+
+	# Command
+	cmd_str = ''' computeMatrix scale-regions -S {infiles[0][0]} \
+					-R {gtf_str} \
+					--metagene \
+					--beforeRegionStartLength 3000 \
+					--regionBodyLength 5000 \
+					--afterRegionStartLength 3000 \
+					--numberOfProcessors 48 \
+					--skipZeros -o {outfile}
+	'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, conda_env='env', W='03:00', n=6, GB=4, print_cmd=False, ow=False, wait=True)
+
+#############################################
+########## 1.3 Plot
+#############################################
+
+@transform(computePhyloMatrix,
+		   regex(r'(.*).gz'),
+		   r'\1_heatmap.png')
+
+def plotPhyloHeatmap(infile, outfile):
+
+	# Command
+	cmd_str = ''' plotHeatmap -m {infile} \
+					--heatmapWidth 13 \
+					--heatmapHeight 15 \
+					-out {outfile}
+	'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=15, print_cmd=False, ow=True, run_locally=False)
+
+#############################################
+########## 1.4 Plot
+#############################################
+
+@transform(computePhyloMatrix,
+		   regex(r'(.*).gz'),
+		   r'\1_profile.png')
+
+def plotPhyloProfile(infile, outfile):
+
+	# Command
+	cmd_str = ''' plotProfile -m {infile} \
+		--numPlotsPerRow 4 \
+		--plotHeight 10 \
+		--plotWidth 13 \
+		--yAxisLabel "Conservation score (PhyloP)" \
+		--samplesLabel "" \
+		--colors "#6BAED6" "#78C679" "#EE6A50" "#66C2A4" "#E9967A"\
+		-out {outfile}
+	'''.format(**locals())
+		# --plotTitle "Human isoform conservation" \
+
+	# Run
+	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=15, print_cmd=False, ow=True, run_locally=False)
+
+# #############################################
+# ########## 1.4 Plot
+# #############################################
+
+# @transform(computeIsoformMatrix,
+# 		   regex(r'(.*).gz'),
+# 		   add_inputs(r'\1.json'),
+# 		   r'\1_profile_v2.png')
+
+# def plotIsoformProfile2(infiles, outfile):
+
+# 	# Read JSON
+# 	with open(infiles[1]) as openfile:
+# 		# samples_label = '" "'.join(json.load(openfile))
+# 		samples_label = [' ' for x in json.load(openfile)]
+
+# 	# Command
+# 	cmd_str = ''' plotProfile -m {infiles[0]} \
+# 		--numPlotsPerRow 3 \
+# 		--perGroup \
+# 		--plotWidth 10 \
+# 		--samplesLabel {samples_label} \
+# 		-out {outfile}
+# 	'''.format(**locals())
+# 		# --colors "#6BAED6" "#78C679" "#EE6A50" "#66C2A4" "#E9967A"\
+
+# 	# Run
+# 	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=5, print_cmd=False, ow=True, run_locally=True)
 
 #######################################################
 #######################################################
