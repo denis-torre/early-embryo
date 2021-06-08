@@ -222,23 +222,31 @@ def downloadFASTQ(infile, outfiles, outfileRoot):
 ########## 1. Get SRP IDs
 #############################################
 # SRP tables looked inconsistent and lacked sample names
-# Manually selected samples in arion/datasets/xia/xia-samples_v2.csv from GEO 
+# Manually selected samples in arion/datasets/xia/xia-samples_names.csv from GEO 
 # at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE124718 on 2021/05/27
 
-@transform('arion/datasets/xia/xia-samples_v2.csv',
+@transform('arion/datasets/xia/xia-samples.csv',
 		   suffix('.csv'),
-		   '_metadata.tsv')
+		   add_inputs('arion/datasets/xia/xia-sample_names.csv'),
+		   '_fixed.csv')
 
-def convertSRX(infile, outfile):
+def fixXiaNames(infiles, outfile):
 
-	# Read
-	sample_dataframe = pd.read_csv(infile)
+	# Read metadata file
+	metadata_dataframe = pd.read_csv(infiles[0], comment='#').rename(columns={'Sample Name': 'geo_sample_id'})
 
-	# Get IDs
-	gsm_ids = ' '.join(sample_dataframe['geo_sample_id'])
+	# Read sample dataframe
+	sample_dataframe = pd.read_csv(infiles[1], comment='#')
 
-	# Command
-	os.system('pysradb gsm-to-srx --detailed --saveto {outfile} {gsm_ids}'.format(**locals()))
+	# Merge
+	merged_dataframe = metadata_dataframe.merge(sample_dataframe, on='geo_sample_id', how='inner')[['Run', 'AvgSpotLen', 'Developmental_stage', 'LibraryLayout', 'geo_sample_id', 'Antibody', 'sample_name']]
+	merged_dataframe['sample_name_AvgSpotLen'] = ['{sample_name}_{AvgSpotLen}'.format(**rowData).replace('hs_', 'human_').replace('cell', 'C').replace('rep', 'Rep') for index, rowData in merged_dataframe.iterrows()]
+
+	# Filter
+	merged_dataframe = merged_dataframe[['human' in x and 'ATAC' not in x for x in merged_dataframe['sample_name_AvgSpotLen']]]
+
+	# Write
+	merged_dataframe.to_csv(outfile, index=False)
 
 #############################################
 ########## 2. SRA
@@ -248,52 +256,47 @@ def convertSRX(infile, outfile):
 # ml sratoolkit/2.10.5 
 # fasterq-dump -e 6 -p --split-files SRR9131738
 
-@subdivide(convertSRX,
-		   regex(r'(.*)/.*.tsv'),
-		   add_inputs(),
+@subdivide(fixXiaNames,
+		   regex(r'(.*)/.*.csv'),
 		   r'\1/rawdata/*.fastq.gz',
-		   r'\1/rawdata/{experiment_accession}*.fastq.gz')
+		   r'\1/rawdata/{sample_name_AvgSpotLen}/{Run}*.fastq.gz')
 
-def downloadSRX(infile, outfiles, outfileRoot):
+def downloadXia(infile, outfiles, outfileRoot):
 
 	# Read metadata file
-	metadata_dataframe = pd.read_table(infile)
+	metadata_dataframe = pd.read_csv(infile).query('AvgSpotLen <= 200')
+	metadata_dataframe = metadata_dataframe[['H3K27me3' in x for x in metadata_dataframe['sample_name_AvgSpotLen']]]
 
 	# Loop
 	for index, rowData in metadata_dataframe.iterrows():
 
-		# Get platform
-		experiment_accession = rowData['experiment_accession']
-
 		# Get outdir
-		outfile_pattern = outfileRoot.format(**locals())
+		outfile_pattern = outfileRoot.format(**rowData)
 		outdir = os.path.dirname(outfile_pattern)
 
-		print(outfile_pattern)
-
-		# # Run
-		# if len(glob.glob(outfile_pattern)) == 0:
+		# Run
+		if len(glob.glob(outfile_pattern)) == 0:
 			
-		# 	# Create directory
-		# 	if not os.path.exists(outdir):
-		# 		os.makedirs(outdir)
+			# Create directory
+			if not os.path.exists(outdir):
+				os.makedirs(outdir)
 
-		# 	# Download
-		# 	print('Doing {outfile_pattern}...'.format(**locals()))
-		# 	os.system('ml sratoolkit/2.10.5 && cd {outdir} && fasterq-dump -e 6 -p --split-files {run}'.format(**locals())) # && gzip {run}*.fastq
+			# Download
+			print('Doing {outfile_pattern}...'.format(**locals()))
+			os.system('ml sratoolkit/2.10.5 && cd {outdir} && fasterq-dump -e 6 -p --split-files {Run}'.format(**locals(), **rowData)) # && gzip {run}*.fastq
 
-		# 	# Get files
-		# 	uncompressed_files = glob.glob(outfile_pattern.replace('.gz', ''))
+			# Get files
+			uncompressed_files = glob.glob(outfile_pattern.replace('.gz', ''))
 
-		# 	# Loop
-		# 	for uncompressed_file in uncompressed_files:
+			# Loop
+			for uncompressed_file in uncompressed_files:
 
-		# 		# Compress
-		# 		cmd_str = 'gzip {uncompressed_file}'.format(**locals())
+				# Compress
+				cmd_str = 'gzip {uncompressed_file}'.format(**locals())
 
-		# 		# Run
-		# 		outfile = uncompressed_file+'.gz'
-		# 		run_job(cmd_str, outfile, W='03:00', GB=6, n=1)
+				# Run
+				outfile = uncompressed_file+'.gz'
+				run_job(cmd_str, outfile, W='03:00', GB=6, n=1)
 
 #######################################################
 #######################################################
@@ -325,6 +328,32 @@ def downloadPhyloP(url_path, outfile):
 
 	# Download
 	os.system('cd {outdir} && wget {url_path}'.format(**locals()))
+
+#############################################
+########## 2. liftOver
+#############################################
+
+def liftoverJobs():
+	chain_files = ['http://hgdownload.cse.ucsc.edu/goldenpath/mm10/liftOver/mm10ToHg38.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToMm10.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToRheMac10.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToSusScr11.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToDanRer11.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToGalGal6.over.chain.gz']
+	for url_path in chain_files:
+		filename = os.path.basename(url_path)
+		genome = filename.split('To')[0]
+		organism = genome.replace('mm10', 'mouse').replace('hg38', 'human')
+		outfile = 'arion/datasets/liftover/{organism}/{filename}'.format(**locals())
+		yield [url_path, outfile]
+
+@files(liftoverJobs)
+
+def downloadLiftOver(url_path, outfile):
+
+	# Outdir
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Download
+	if not os.path.exists(outfile):
+		os.system('cd {outdir} && wget {url_path}'.format(**locals()))
 
 #######################################################
 #######################################################
@@ -390,7 +419,7 @@ def downloadGenomes(infile, outfiles, outfileRoot):
 			# 	# Command
 			# 	os.system('wget -P {outdir} {url}'.format(**locals()))
 
-			# 	# Command
+			# 	# Commandryo 
 			# 	cmd_str = 'gunzip {outfile}'.format(**locals())
 			
 			# 	# Run
