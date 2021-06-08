@@ -1113,25 +1113,6 @@ def mergeRepeatMasker(infiles, outfile):
 
 #######################################################
 #######################################################
-########## Summary
-#######################################################
-#######################################################
-
-#############################################
-########## 1. Create summary
-#############################################
-
-@collate((getTalonSummary, formatCPAT, mergePfamResults, mergeRepeatMasker),
-		 regex(r'(.*)/.*.dir/(.*?)/.*'),
-		 r'\1/summary.dir/\2-isoseq_summary.tsv')
-
-def getTranscriptSummary(infiles, outfile):
-
-	# Run
-	run_r_job('get_transcript_summary', infiles, outfile, conda_env='env', W='00:15', GB=10, n=1)
-
-#######################################################
-#######################################################
 ########## S9. PhyloP
 #######################################################
 #######################################################
@@ -1191,6 +1172,133 @@ def mergePhyloScores(infiles, outfile):
 	run_r_job('merge_phylo_scores', infiles, outfile, conda_env='env', W='00:05', GB=10, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
 # bigWigAverageOverBed arion/datasets/phylop/human/hg38.phyloP100way.bw test.bed test.tsv
+
+#######################################################
+#######################################################
+########## S10. liftOver
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Convert
+#############################################
+
+# @follows(addCDS)
+
+# @transform('arion/isoseq/s06-cpat.dir/human/gtf/split/Homo_sapiens.GRCh38.102_talon_01.cds.gtf',
+@transform('arion/isoseq/s06-cpat.dir/*/gtf/split/*.cds.gtf',
+		   regex(r'(.*)/s06-cpat.dir/(.*)/gtf/split/(.*).gtf'),
+		   r'\1/s10-liftover.dir/\2/gp/\3.gp')
+
+def convertToGenePred(infile, outfile):
+
+	# Command
+	tempfile = outfile.replace('.gp', '.tmp.gp')
+	cmd_str = ''' ldHgGene -gtf -nobin -out={tempfile} ignored "" {infile} && awk 'OFS="\t" {{$2="chr"$2; print}}' {tempfile} > {outfile} && rm {tempfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:05', GB=1, n=5, print_cmd=False, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
+
+# find arion/isoseq/s10-liftover.dir/*/gp/*.log | jsc
+
+#############################################
+########## 2. Lift
+#############################################
+
+def liftoverJobs():
+	for organism in ['human', 'mouse']:
+		gp_files = glob.glob('arion/isoseq/s10-liftover.dir/{organism}/gp/*.gp'.format(**locals()))
+		genome_str = organism.replace('human', 'hg38').replace('mouse', 'mm10')
+		liftover_files = glob.glob('arion/datasets/liftover/{organism}/{genome_str}*.over.chain.gz'.format(**locals()))
+		# liftover_file = 'arion/datasets/liftover/human/hg38ToMm10.over.chain.gz' if organism == 'human' else 'arion/datasets/liftover/mouse/mm10ToHg38.over.chain.gz'
+		for liftover_file in liftover_files:
+			lift_string = os.path.basename(liftover_file).split('.')[0]
+			for gp_file in gp_files:
+				basename = os.path.basename(gp_file)[:-len('.gp')]
+				infiles = [gp_file, liftover_file]
+				outfile = 'arion/isoseq/s10-liftover.dir/{organism}/lift/{lift_string}/{basename}-{lift_string}.gp'.format(**locals())
+				yield [infiles, outfile]
+
+@follows(convertToGenePred)
+
+@files(liftoverJobs)
+
+def runLiftOver(infiles, outfile):
+
+	# Unmapped
+	unmapped_file = outfile.replace('.gp', '_unmapped.gp')
+
+	# Command
+	cmd_str = ''' liftOver -genePred {infiles[0]} {infiles[1]} {outfile} {unmapped_file} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['liftover/09-Jul-2019'], W='00:15', GB=1, n=15, print_cmd=False, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
+
+# find arion/isoseq/s10-liftover.dir/*/lift/*/*.log | jsc
+# find arion/isoseq/s10-liftover.dir/*/lift/*/*.err | lr
+
+#############################################
+########## 3. Merge
+#############################################
+
+@follows(runLiftOver)
+
+@collate('arion/isoseq/s10-liftover.dir/*/lift/*/*.gp',
+		 regex(r'(.*)/lift/(.*)/(.*)_..(.cds)-(.*.gp)'),
+		 r'\1/merged/\2/\3\4-\5')
+
+def mergeLiftOver(infiles, outfile):
+
+	# String
+	infiles_str = ' '.join(infiles)
+
+	# Create directory
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Merge
+	os.system('cat {infiles_str} > {outfile}'.format(**locals()))
+
+#############################################
+########## 4. Convert
+#############################################
+
+@follows(mergeLiftOver)
+
+@transform('arion/isoseq/s10-liftover.dir/*/merged/*/*.gp',
+		   regex(r'(.*)/(.*)(?!d).{1}.gp'),
+		#    regex(r'(.*)/(.*-.{10}).gp'),
+		    r'\1/\2.gtf')
+
+def convertLiftOver(infile, outfile):
+
+	# Command
+	cmd_str = ''' genePredToGtf file {infile} {outfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['liftover/09-Jul-2019'], W='00:15', GB=1, n=15, print_cmd=False, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))
+
+# du -hs /hpc/users/torred23/pipelines/projects/early-embryo/arion/isoseq/s10-liftover.dir/*/merged/*.gtf
+
+#######################################################
+#######################################################
+########## Summary
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Create summary
+#############################################
+
+@collate((getTalonSummary, formatCPAT, mergePfamResults, mergeRepeatMasker),
+		 regex(r'(.*)/.*.dir/(.*?)/.*'),
+		 r'\1/summary.dir/\2-isoseq_summary.tsv')
+
+def getTranscriptSummary(infiles, outfile):
+
+	# Run
+	run_r_job('get_transcript_summary', infiles, outfile, conda_env='env', W='00:15', GB=10, n=1)
 
 # #######################################################
 # #######################################################
