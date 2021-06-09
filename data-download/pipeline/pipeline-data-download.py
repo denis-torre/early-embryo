@@ -169,7 +169,7 @@ def qiaoIllumina(infile, outfiles, outfileRoot):
 ########## 1. SRA
 #############################################
 
-@subdivide(('../arion/datasets/blakeley/blakeley-samples.csv', '../arion/datasets/xue/xue-samples.csv', '../arion/datasets/yan/yan-samples.csv', '../arion/datasets/deng/deng-samples.csv'),
+@subdivide(('../arion/datasets/blakeley/blakeley-samples.csv', '../arion/datasets/xue/xue-samples.csv', '../arion/datasets/yan/yan-samples.csv', '../arion/datasets/deng/deng-samples.csv', '../arion/datasets/wang/wang-samples.csv'),
 		   regex(r'(.*)/.*.csv'),
 		   r'\1/rawdata/*.fastq.gzA',
 		   r'\1/rawdata/{run}*.fastq.gz')
@@ -419,11 +419,42 @@ def downloadGenomes(infile, outfiles, outfileRoot):
 			# 	# Command
 			# 	os.system('wget -P {outdir} {url}'.format(**locals()))
 
-			# 	# Commandryo 
+			# 	# Command
 			# 	cmd_str = 'gunzip {outfile}'.format(**locals())
 			
 			# 	# Run
 			# 	run_job(cmd_str, outfile.replace('.gz', ''), W='00:30', GB=15)
+
+#############################################
+########## 2. Download Macaque
+#############################################
+
+@files(ensembl_json,
+	   'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.dna_sm.primary_assembly.fa')
+
+def downloadMacaqueGenome(infile, outfile):
+
+	# Read
+	with open(infile) as openfile:
+		url_regex = json.load(openfile)['macaque']['primary_assembly']
+
+	# Get temp directory
+	splitdir = os.path.join(os.path.dirname(outfile), 'primary_assembly')
+	if not os.path.exists(splitdir):
+		os.makedirs(splitdir)
+
+	# Download
+	fasta_regex = os.path.basename(url_regex)
+	url_dir = os.path.dirname(url_regex)
+	# os.system('cd {splitdir} && wget -r -nd --no-parent -A "{fasta_regex}" {url_dir}'.format(**locals()))
+
+	# Get split files
+	assembly_files = [os.path.join(splitdir, x) for x in os.listdir(splitdir)]
+	assembly_files.sort()
+	assembly_file_str = ' '.join(assembly_files)
+
+	# Concatenate and unzip
+	os.system('cat {assembly_file_str} > {outfile}.gz && gunzip {outfile}.gz'.format(**locals()))
 
 #############################################
 ########## 2. Create JSON
