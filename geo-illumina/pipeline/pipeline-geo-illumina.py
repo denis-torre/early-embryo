@@ -72,10 +72,14 @@ with open('/sc/arion/projects/GuccioneLab/genome-indices/genome-indices.json') a
 
 ##### 3. Variables #####
 linked_fastq = glob.glob('arion/geo_illumina/s01-datasets.dir/*/fastq/*/*.fastq.gz')
+human_linked_fastq = [x for x in linked_fastq if 'wang' not in x]
+macaque_linked_fastq = [x for x in linked_fastq if 'wang' in x]
 human_filtered_gtf = 'arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf'
 human_star_index = 'arion/illumina/s04-alignment.dir/human/all/STAR/index'
 human_rsem_index = 'arion/illumina/s04-alignment.dir/human/all/RSEM/index/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.idx.fa'
 human_junction_file = 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_junctions.tsv'
+macaque_gtf = 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.102.gtf'
+macaque_primary_assembly = 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.dna_sm.primary_assembly.fa'
 
 #######################################################
 #######################################################
@@ -148,7 +152,6 @@ def fixXueSamples(infile, outfile):
 	sample_dataframe['cell_type'] = [x.split(':')[-1].replace('-cell blastomere', 'C').replace('zygote', '1C') for x in sample_dataframe['geo_cell_type']]
 	sample_dataframe
 
-
 	# Sort and add sample number
 	sample_dataframe = sample_dataframe.sort_values('cell_type')
 	sample_dataframe['sample_number'] = sample_dataframe.groupby('cell_type').cumcount()+1
@@ -190,10 +193,48 @@ def fixLiuSamples(infile, outfile):
 	sample_dataframe.to_csv(outfile, index=False)
 
 #############################################
-########## 4. Link
+########## 4. Wang
 #############################################
 
-@subdivide((fixYanSamples, fixXueSamples, fixLiuSamples),
+@transform('arion/datasets/wang/wang-samples.csv',
+		   regex(r'.*/(.*)/(.*)s.csv'),
+		   r'arion/geo_illumina/s01-datasets.dir/\1/\2_names.csv')
+
+def fixWangSamples(infile, outfile):
+
+	# Outdir
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Columns to rename
+	column_dict = {'Run': 'Run', 'source_name': 'source_name'}
+
+	# Read
+	sample_dataframe = pd.read_csv(infile, comment='#')
+
+	# Rename and select embryo samples
+	sample_dataframe = sample_dataframe.rename(columns=column_dict)[column_dict.values()]
+
+	# Add sample name
+	sample_dict = {'8-cell embryo': '8C', 'blastocyst': 'blastocyst', 'morula': 'morula', 'germinal vesicle-stage oocyte': 'GV_oocyte', '1-cell embryo at pronuclear (PN) stage': '1C', 'mature oocyte': 'M_oocyte', '2-cell embryo': '2C', '4-cell embryo': '4C'}
+	sample_dataframe['cell_type'] = [sample_dict[x] for x in sample_dataframe['source_name']]
+
+	# Sort and add sample number
+	sample_dataframe = sample_dataframe.sort_values('cell_type')
+	sample_dataframe['sample_number'] = sample_dataframe.groupby('cell_type').cumcount()+1
+
+	# Add sample name
+	sample_dataframe['sample_name'] = ['macaque_{cell_type}_Rep{sample_number}'.format(**rowData) for index, rowData in sample_dataframe.iterrows()]
+
+	# Write
+	sample_dataframe.to_csv(outfile, index=False)
+
+#############################################
+########## 5. Link
+#############################################
+
+@subdivide((fixYanSamples, fixXueSamples, fixLiuSamples, fixWangSamples),
 		   regex(r'(.*)/.*-sample_names.csv'),
 		   r'\1/fastq/*/*.fastq.gz',
 		   r'\1/fastq/{sample_name}/{fastq_basename}')
@@ -214,21 +255,21 @@ def linkFASTQ(infile, outfiles, outfileRoot):
 
 		# Loop
 		for fastq_file in fastq_files:
-			pass
 
-			# # Get basename
-			# fastq_basename = os.path.basename(fastq_file)
+			# Get basename
+			fastq_basename = os.path.basename(fastq_file)
 
-			# # Get outfile
-			# outfile = outfileRoot.format(**locals(), **rowData)
+			# Get outfile
+			outfile = outfileRoot.format(**locals(), **rowData)
 		
-			# # Outdir
-			# outdir = os.path.dirname(outfile)
-			# if not os.path.exists(outdir):
-			# 	os.makedirs(outdir)
+			# Outdir
+			outdir = os.path.dirname(outfile)
+			if not os.path.exists(outdir):
+				os.makedirs(outdir)
 
-			# # Link
-			# os.system('ln -s {fastq_file} {outfile}'.format(**locals()))
+			# Link
+			if not os.path.exists(outfile):
+				os.system('ln -s {fastq_file} {outfile}'.format(**locals()))
 
 #######################################################
 #######################################################
@@ -242,7 +283,7 @@ def linkFASTQ(infile, outfiles, outfileRoot):
 
 # @follows(linkFASTQ)
 
-@transform(linked_fastq,
+@transform((linked_fastq),
 		   regex(r'(.*)/s01-datasets.dir/(.*)/fastq/(.*)/(.*).fastq.gz'),
 		   r'\1/s02-fastqc.dir/\2/\4_fastqc.html')
 
@@ -285,7 +326,7 @@ def runMultiQC(infile, outfile):
 
 # @follows(linkFASTQ)
 
-@collate(linked_fastq,
+@collate(human_linked_fastq,
 		 regex(r'(.*)/s01-datasets.dir/(.*)/fastq/(.*)/.*.fastq.gz'),
 		 add_inputs(human_star_index),
 		 r'\1/s03-alignment.dir/\2/STAR/pass1/\3/\3-SJ.out.tab')
@@ -322,7 +363,7 @@ def getStarJunctions(infiles, outfile):
 
 @follows(getStarJunctions)
 
-@collate(linked_fastq,
+@collate(human_linked_fastq,
 		 regex(r'(.*)/s01-datasets.dir/(.*)/fastq/(.*)/.*.fastq.gz'),
 		 add_inputs(human_star_index, r'\1/s03-alignment.dir/\2/STAR/pass1/*/*-SJ.out.tab'),
 		 r'\1/s03-alignment.dir/\2/STAR/pass2/\3/\3-Aligned.sortedByCoord.out.bam')
@@ -498,7 +539,7 @@ def aggregateCounts(infiles, outfile):
 # @collate(runStar,
 # @collate('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
 # @collate('arion/illumina/s04-alignment.dir/human/all/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
-@collate(('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam', 'arion/illumina/s04-alignment.dir/human/all/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam'),
+@collate(('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam', 'arion/illumina/s04-alignment.dir/human/all/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam', 'arion/geo_illumina/s05-macaque.dir/alignment/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam'),
 		 regex(r'.*.dir/(.*)/STAR/pass2/.*/.*.bam'),
 		 r'arion/geo_illumina/summary.dir/sashimi/settings/\1-bams.txt')
 
@@ -573,6 +614,143 @@ def makeBamTables(infiles, outfile):
 
 # 	# Run
 # 	run_py_job('ggsashimi', infile, outfile, W="00:10", GB=30, n=1, run_locally=False, conda_env='env')
+
+#######################################################
+#######################################################
+########## S5. Macaque analysis
+#######################################################
+#######################################################
+
+#############################################
+########## 1. STAR index
+#############################################
+
+@files((macaque_primary_assembly, macaque_gtf),
+	   'arion/geo_illumina/s05-macaque.dir/indices/STAR')
+
+def buildMacaqueStarIndex(infiles, outfile):
+
+	# Command
+	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[0]} --sjdbGTFfile {infiles[1]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=True, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=False)
+
+#############################################
+########## 2. RSEM index
+#############################################
+
+@files((macaque_primary_assembly, macaque_gtf),
+	   'arion/geo_illumina/s05-macaque.dir/indices/RSEM/Macaca_mulatta.Mmul_10.102.idx.fa')
+
+def buildMacaqueRsemIndex(infiles, outfile):
+
+	# Command
+	basename = outfile[:-len('.idx.fa')]
+	cmd_str = ''' rsem-prepare-reference --gtf {infiles[1]} --num-threads 10 {infiles[0]} {basename} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=True, stdout=basename+'.log', stderr=basename+'.err')
+
+#############################################
+########## 3. STAR first pass
+#############################################
+
+# @follows(linkFASTQ)
+
+@collate(macaque_linked_fastq,
+		 regex(r'(.*)/s01-datasets.dir/.*/fastq/(.*)/.*.fastq.gz'),
+		 add_inputs(buildMacaqueStarIndex),
+		 r'\1/s05-macaque.dir/alignment/STAR/pass1/\2/\2-SJ.out.tab')
+
+def getMacaqueStarJunctions(infiles, outfile):
+
+	# Split
+	fastq_files = [x[0] for x in infiles]
+	star_index = infiles[0][1]
+
+	# FASTQ string
+	fastq_str = ' '.join(fastq_files)
+
+	# Prefix
+	prefix = outfile[:-len('SJ.out.tab')]
+
+	# Command
+	cmd_str = ''' STAR \
+		--genomeDir {star_index} \
+		--readFilesIn {fastq_str} \
+		--readFilesCommand zcat \
+		--outFileNamePrefix {prefix} \
+		--runThreadN 100 \
+		--outSAMtype None'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, W="02:00", print_outfile=False, GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
+
+# find arion/geo_illumina/s05-macaque.dir -name "*job.log" | jsc
+# find arion/geo_illumina/s05-macaque.dir -name "*final.out" | xargs grep -e 'Uniquely'
+
+#############################################
+########## 4. STAR second pass
+#############################################
+
+@collate(macaque_linked_fastq,
+		 regex(r'(.*)/s01-datasets.dir/.*/fastq/(.*)/.*.fastq.gz'),
+		 add_inputs(buildMacaqueStarIndex, getMacaqueStarJunctions),
+		 r'\1/s05-macaque.dir/alignment/STAR/pass2/\2/\2-Aligned.sortedByCoord.out.bam')
+
+def runMacaqueStar(infiles, outfile):
+
+	# Split
+	fastq_files = [x[0] for x in infiles]
+	star_index = infiles[0][1]
+	sj_files = infiles[0][2:]
+
+	# Variables
+	prefix = outfile[:-len('Aligned.sortedByCoord.out.bam')]
+	fastq_str = ' '.join(fastq_files)
+	sj_files_str = ' '.join(sj_files)
+
+	# Command
+	cmd_str = ''' STAR \
+		--genomeDir {star_index} \
+		--readFilesIn {fastq_str} \
+		--readFilesCommand zcat \
+		--outFileNamePrefix {prefix} \
+		--runThreadN 32 \
+		--sjdbFileChrStartEnd {sj_files_str} \
+		--limitSjdbInsertNsj 5000000 \
+		--quantMode TranscriptomeSAM GeneCounts \
+		--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
+
+# find arion/geo_illumina/s05-macaque.dir/alignment/STAR/pass2 -name "*.log" | js
+
+#############################################
+########## 5. Create BigWig
+#############################################
+
+@transform(runMacaqueStar,
+		   suffix('-Aligned.sortedByCoord.out.bam'),
+		   '.bw')
+
+def createMacaqueBigWig(infile, outfile):
+
+	# Command
+	cmd_str = """bamCoverage --outFileFormat=bigwig --skipNonCoveredRegions --numberOfProcessors=50 --normalizeUsing RPKM -b {infile} -o {outfile}""".format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, conda_env='env', W='05:00', n=7, GB=6)
+
+#############################################
+########## 5. RSEM
+#############################################
+
+#############################################
+########## 6. Merge
+#############################################
 
 #######################################################
 #######################################################
