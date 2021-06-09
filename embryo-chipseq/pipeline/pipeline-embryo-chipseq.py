@@ -71,17 +71,94 @@ with open('/sc/arion/projects/GuccioneLab/genome-indices/genome-indices.json') a
 	genome_indices = json.load(openfile)
 
 ##### 3. Variables #####
+# All FASTQ
+all_illumina_fastq = glob.glob('arion/chipseq/s01-fastq.dir/*/*/*/*.f*q.gz')
 
 #######################################################
 #######################################################
-########## S1. 
+########## S1. FASTQ
 #######################################################
 #######################################################
 
 #############################################
-########## 1. 
+########## 1. Link
 #############################################
 
+def linkJobs():
+	fastq_files = glob.glob('arion/datasets/xia/rawdata/*/*.fastq.gz')
+	for fastq_file in fastq_files:
+		sample_name = fastq_file.split('/')[-2]
+		fastq_name = os.path.basename(fastq_file)
+		read_mate = '_'+fastq_name.split('_')[-1][0] if '_' in fastq_name else ''
+		infile = os.path.join(os.getcwd(), fastq_file)
+		outfile = 'arion/chipseq/s01-fastq.dir/human/raw/{sample_name}/{sample_name}{read_mate}.fastq.gz'.format(**locals())
+		yield [infile, outfile]
+
+@files(linkJobs)
+
+def linkFASTQ(infile, outfile):
+
+	# Outdir
+	outdir = os.path.dirname(outfile)
+
+	# Create
+	os.system('mkdir -p {outdir} && ln -s {infile} {outfile}'.format(**locals()))
+
+#######################################################
+#######################################################
+########## S2. QC
+#######################################################
+#######################################################
+
+#############################################
+########## 1. FASTQC
+#############################################
+
+# @follows(linkFASTQ, trimIlluminaAdapters)
+
+@transform(all_illumina_fastq,
+		   regex(r'(.*)/s01-fastq.dir/(.*).f.*q.gz'),
+		   r'\1/s02-fastqc.dir/\2_fastqc.html')
+
+def runFastQC(infile, outfile):
+
+	# Command
+	cmd_str = '''fastqc --outdir=$(dirname {outfile}) {infile}'''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['fastqc/0.11.8'], W='03:00', GB=12, n=1, print_outfile=False)
+
+# ls arion/chipseq/s02-fastqc.dir/human/raw | wc -l
+
+#############################################
+########## 2. MultiQC
+#############################################
+
+# @follows(runFastQC)
+
+def qcJobs():
+	filelist = [
+		['arion/chipseq/s02-fastqc.dir/human/raw', 'arion/chipseq/multiqc/human_fastqc/multiqc_report.html'],
+		# ['arion/chipseq/s02-fastqc.dir/human/trimmed', 'arion/chipseq/multiqc/human_fastqc_trimmed/multiqc_report.html'],
+		# ['arion/chipseq/s03-alignment.dir/human/bowtie2', 'arion/chipseq/multiqc/human_alignment/multiqc_report.html'],
+		# ['arion/illumina/s02-fastqc.dir/human/trimmed', 'arion/illumina/multiqc/human_fastqc_trimmed/multiqc_report.html'],
+		# ['arion/illumina/s02-fastqc.dir/mouse/trimmed', 'arion/illumina/multiqc/mouse_fastqc_trimmed/multiqc_report.html'],
+		# ['arion/illumina/s04-alignment.dir/human', 'arion/illumina/multiqc/human_alignment_trimmed/multiqc_report.html'],
+		# ['arion/illumina/s04-alignment.dir/mouse', 'arion/illumina/multiqc/mouse_alignment_trimmed/multiqc_report.html'],
+	]
+	for files in filelist:
+		yield [files[0], files[1]]
+
+@files(qcJobs)
+
+def runMultiQC(infile, outfile):
+
+	# Command
+	cmd_str = 'multiqc --outdir $(dirname {outfile}) {infile}'.format(**locals())
+
+	# Run
+	if not os.path.exists(outfile):
+		run_job(cmd_str, outfile, conda_env='env', W="01:00", GB=10, n=1, print_outfile=False, run_locally=False, stdout=outfile.replace('.html', '.log'))
 
 #######################################################
 #######################################################
