@@ -1,0 +1,42 @@
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/all-bams.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --coordinates 3:98624708-98629032 \
+    --min-coverage 500 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-all \
+    --out-format png
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/macaque-bams.txt \
+    --gtf arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered.gtf \
+    --coordinates 2:177473616-177478293 \
+    --min-coverage 100 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-macaque \
+    --out-format png
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/macaque-bams.txt \
+    --gtf arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered.gtf \
+    --coordinates 2:177473616-177478293 \
+    --min-coverage 50 \
+    --overlay 3 \
+    --aggr mean_j \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-macaque_y \
+    --out-format png
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/macaque-bams_no_oocyte.txt \
+    --gtf arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered.gtf \
+    --coordinates 2:177473616-177478293 \
+    --min-coverage 10 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-macaque_no_oocyte \
+    --out-format png
