@@ -651,7 +651,8 @@ def prepareSampleMetadata(infiles, outfile):
 def aggregateCounts(infiles, outfile):
 
 	# Run
-	run_r_job('aggregate_counts', infiles, outfile, conda_env='env', run_locally=False, W='00:30', GB=30, n=1, wait=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+	print(outfile)
+	# run_r_job('aggregate_counts', infiles, outfile, conda_env='env', run_locally=False, W='00:30', GB=30, n=1, wait=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
 # find arion/illumina/s05-expression.dir/*/all -name "*counts*" | xargs rm
 
@@ -667,6 +668,20 @@ def aggregateCounts(infiles, outfile):
 
 # 	# Run
 # 	run_r_job('get_transcript_tpm', infile, outfile, run_locally=False, ow=False)
+
+# #############################################
+# ########## 3. Gene counts
+# #############################################
+
+@transform('arion/illumina/s05-expression.dir/*/all/*-counts.rda',
+# @transform(aggregateCounts,
+		   suffix('counts.rda'),
+		   'gene_normalized_counts.tsv')
+
+def getGeneExpression(infile, outfile):
+
+	# Run
+	run_r_job('get_gene_expression', infile, outfile, run_locally=True, ow=False)
 
 #######################################################
 #######################################################
@@ -840,6 +855,57 @@ def createRmatsSummary(infiles, outfile):
 
 	# Write
 	summary_dataframe.to_csv(outfile, sep='\t', index=False)
+
+#######################################################
+#######################################################
+########## S8. WGCNA
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Pick soft thresholds
+#############################################
+
+# @follows(getGeneExpression)
+
+@transform('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv',
+		   regex(r'(.*)/s05-expression.dir/(.*)/all/.*.tsv'),
+		   r'\1/s08-wgcna.dir/\2/\2-soft_thresholds.rda')
+
+def pickSoftThresholds(infile, outfile):
+
+	# Run
+	run_r_job('pick_soft_thresholds', infile, outfile, modules=['R/4.0.3'], W='00:45', GB=25, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 2. Cluster genes
+#############################################
+
+# @follows(getGeneExpression)
+
+@transform(pickSoftThresholds,
+		   suffix('-soft_thresholds.rda'),
+		   '-gene_network.rda')
+
+def clusterGenes(infile, outfile):
+
+	# Run
+	run_r_job('cluster_genes', infile, outfile, modules=['R/4.0.3'], W='00:45', GB=50, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 3. Get modules
+#############################################
+
+# @follows(getGeneExpression)
+
+@transform(clusterGenes,
+		   suffix('network.rda'),
+		   'modules.rda')
+
+def getGeneModules(infile, outfile):
+
+	# Run
+	run_r_job('get_gene_modules', infile, outfile, modules=['R/4.0.3'], W='00:45', GB=15, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
 #######################################################
 #######################################################

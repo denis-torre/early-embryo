@@ -205,6 +205,29 @@ get_transcript_tpm <- function(infile, outfile) {
 
 }
 
+#############################################
+########## 3. Gene counts
+#############################################
+
+get_gene_expression <- function(infile, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(library(DESeq2))
+
+    # Load
+    load(infile)
+    
+    # Get expression
+    # expression_type <- gsub('.*gene_(.*).tsv', '\\1', outfile)
+    # abundance_dataframe <- assay(gse, expression_type) %>% as.data.frame %>% rownames_to_column('gene_id')
+    dds <- estimateSizeFactors(dds_list[['gene']])
+    expression_dataframe <- counts(dds, normalized=TRUE) %>% as.data.frame %>% rownames_to_column('gene_id')
+
+    # Write
+    write.table(expression_dataframe, file=outfile, quote=FALSE, sep='\t', row.names=FALSE)
+
+}
+
 #######################################################
 #######################################################
 ########## S5. Differential expression
@@ -302,7 +325,7 @@ run_deseq2 <- function(infiles, outfileRoot, feature) {
 
 #######################################################
 #######################################################
-########## S9. Enrichment
+########## S7. Enrichment
 #######################################################
 #######################################################
 
@@ -333,7 +356,6 @@ run_go_enrichment <- function(infile, outfile) {
     fwrite(gsea_dataframe, file=outfile, sep='\t')
 
 }
-
 
 #############################################
 ########## 2. Domain
@@ -381,6 +403,113 @@ run_repeat_enrichment <- function(infiles, outfile) {
 
     # Write
     fwrite(gsea_dataframe, file=outfile, sep='\t')
+}
+
+#######################################################
+#######################################################
+########## S8. WGCNA
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Pick soft thresholds
+#############################################
+
+pick_soft_thresholds <- function(infile, outfile) {
+
+    # Library
+    require(WGCNA)
+
+    # Counts
+    normalized_count_dataframe <- fread(infile) %>% filter(grepl('ENS', gene_id)) %>% column_to_rownames('gene_id')
+
+    # Remove genes with low counts and low variance
+    gene_counts <- apply(normalized_count_dataframe, 1, sum)
+    gene_var <- apply(normalized_count_dataframe, 1, var)
+    statistic_dataframe <- cbind(gene_counts, gene_var) %>% as.data.frame %>% rownames_to_column('gene_id')
+
+    # Filter genes
+    good_genes <- statistic_dataframe %>% filter(gene_counts > 15 & gene_var > 0.5) %>% pull(gene_id)
+    
+    # Filter expression
+    log1p_dataframe <- log10(normalized_count_dataframe[good_genes,]+1) %>% t
+
+    # Pick soft threshold
+    powers <- 1:20
+    sft <- pickSoftThreshold(log1p_dataframe, powerVector=powers)
+
+    # Save
+    save(sft, powers, log1p_dataframe, file=outfile)
+
+}
+
+#############################################
+########## 2. Cluster genes
+#############################################
+
+cluster_genes <- function(infile, outfile) {
+
+    # Library
+    require(WGCNA)
+
+    # Load
+    load(infile)
+
+    # Get adjacency
+    adjacency <- adjacency(log1p_dataframe, power = 6)
+
+    # Turn adjacency into topological overlap
+    TOM <- TOMsimilarity(adjacency);
+    dissTOM <- 1-TOM
+
+    # Cluster genes
+    geneTree <- hclust(as.dist(dissTOM), method = "average")
+
+    # Save
+    save(geneTree, dissTOM, file=outfile)
+    save(adjacency, file=gsub('.rda', '_adjacency.rda', outfile))
+
+}
+
+#############################################
+########## 3. Get modules
+#############################################
+
+get_gene_modules <- function(infile, outfile) {
+
+    # Library
+    require(WGCNA)
+
+    # Load
+    load(infile)
+
+    # Module identification using dynamic tree cut
+    dynamicMods <- cutreeDynamic(dendro = geneTree, distM = dissTOM, minClusterSize = 50, cutHeight=0.995)
+    dynamicColors <- labels2colors(dynamicMods)
+
+    # Calculate eigengenes
+    MEList <- moduleEigengenes(log1p_dataframe, colors = dynamicColors)
+    MEs <- MEList$eigengenes
+
+    # Calculate dissimilarity of module eigengenes and cluster
+    MEDiss <- 1-cor(MEs)
+    METree <- hclust(as.dist(MEDiss), method = "average")
+
+    # Merge eigengenes
+    MEDissThres <- 0.16
+    merge <- mergeCloseModules(log1p_dataframe, dynamicColors, cutHeight = MEDissThres, verbose = 3)
+
+    # Rename
+    moduleColors <- merge$colors;
+    MEs <- merge$newMEs;
+
+    # Construct numerical labels corresponding to the colors
+    colorOrder <- c("grey", standardColors(50));
+    moduleLabels <- match(moduleColors, colorOrder)-1;
+
+    # Save
+    save(MEs, moduleLabels, moduleColors, geneTree, file=outfile)
+
 }
 
 #######################################################
