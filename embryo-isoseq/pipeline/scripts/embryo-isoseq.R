@@ -603,6 +603,31 @@ merge_phylo_scores <- function(infiles, outfile) {
 
 #######################################################
 #######################################################
+########## S10. liftOver
+#######################################################
+#######################################################
+
+#############################################
+########## 4. Filter
+#############################################
+
+filter_genepred <- function(infiles, outfile) {
+
+    # Read GenePred
+    genepred_dataframe <- fread(infiles[1]) %>% mutate(V2=gsub('chr', '', V2))
+
+    # Read transcripts
+    transcript_ids <- rtracklayer::readGFF(infiles[2]) %>% pull(transcript_id) %>% unique
+
+    # Filter
+    result_dataframe <- genepred_dataframe %>% filter(V1 %in% transcript_ids)
+
+    # Write
+    fwrite(result_dataframe, file=outfile, sep='\t', col.names = FALSE)
+}
+
+#######################################################
+#######################################################
 ########## Summary
 #######################################################
 #######################################################

@@ -1261,15 +1261,28 @@ def mergeLiftOver(infiles, outfile):
 	os.system('cat {infiles_str} > {outfile}'.format(**locals()))
 
 #############################################
-########## 4. Convert
+########## 4. Filter
 #############################################
 
-@follows(mergeLiftOver)
+# @follows(mergeLiftOver)
 
 @transform('arion/isoseq/s10-liftover.dir/*/merged/*/*.gp',
-		   regex(r'(.*)/(.*)(?!d).{1}.gp'),
-		#    regex(r'(.*)/(.*-.{10}).gp'),
-		    r'\1/\2.gtf')
+		   regex(r'(.*)/(.*)/(merged)/(.*)(?!d).{1}.gp'),
+		   add_inputs(r'arion/illumina/s04-alignment.dir/\2/all/gtf/*-all-SJ_filtered.gtf'),
+		    r'\1/\2/\3/\4_filtered.gp')
+
+def filterGenePred(infiles, outfile):
+
+	# Run
+	run_r_job('filter_genepred', infiles, outfile, conda_env='env', W='00:05', GB=10, n=1, run_locally=False, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
+
+#############################################
+########## 5. Convert
+#############################################
+
+@transform(filterGenePred,
+		   suffix('.gp'),
+		   '.gtf')
 
 def convertLiftOver(infile, outfile):
 
@@ -1277,7 +1290,7 @@ def convertLiftOver(infile, outfile):
 	cmd_str = ''' genePredToGtf file {infile} {outfile} '''.format(**locals())
 	
 	# Run
-	run_job(cmd_str, outfile, modules=['liftover/09-Jul-2019'], W='00:15', GB=1, n=15, print_cmd=False, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))
+	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:15', GB=1, n=15, print_cmd=False, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))
 
 # du -hs /hpc/users/torred23/pipelines/projects/early-embryo/arion/isoseq/s10-liftover.dir/*/merged/*.gtf
 
