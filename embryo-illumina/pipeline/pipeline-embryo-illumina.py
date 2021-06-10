@@ -923,6 +923,22 @@ def runModuleEnrichment(infiles, outfile):
 	# Run
 	run_r_job('run_module_enrichment', infiles, outfile, run_locally=True)#, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
+#############################################
+########## 5. Get module correlations
+#############################################
+
+# @follows(getGeneExpression)
+
+@transform(getGeneModules,
+		   suffix('s.rda'),
+		   add_inputs('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv'),
+		   '_correlation.tsv')
+
+def getModuleCorrelations(infiles, outfile):
+
+	# Run
+	run_r_job('get_module_correlations', infiles, outfile, modules=['R/4.0.3'], stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
 #######################################################
 #######################################################
 ########## S8. SUPPA

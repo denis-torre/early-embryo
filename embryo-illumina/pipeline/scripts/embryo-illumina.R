@@ -556,6 +556,46 @@ run_module_enrichment <- function(infile, outfile) {
 
 }
 
+#############################################
+########## 5. Get module correlations
+#############################################
+
+get_module_correlations <- function(infiles, outfile) {
+
+    # Load
+    load(infiles[1])
+
+    # Read expression
+    normalized_count_dataframe <- fread(infiles[2]) %>% filter(grepl('TALON', gene_id)) %>% column_to_rownames('gene_id') %>% as.matrix
+
+    # Normalize expression
+    log1p_matrix <- log10(normalized_count_dataframe+1)
+
+    # Get eigengenes
+    eigengene_matrix <- me_dataframe %>% column_to_rownames('sample_name') %>% as.matrix %>% t
+
+    # Get common samples
+    common_samples <- intersect(colnames(log1p_matrix), colnames(eigengene_matrix))
+    log1p_matrix <- log1p_matrix[,common_samples]
+    eigengene_matrix <- eigengene_matrix[,common_samples]
+
+    # Correlate
+    correlation_results <- list()
+    for (i in 1:nrow(log1p_matrix)) {
+        for (j in 1:nrow(eigengene_matrix)) {
+            spearman_results <- suppressWarnings(cor.test(log1p_matrix[i,], eigengene_matrix[j,], method='spearman'))
+            correlation_results[[length(correlation_results)+1]] <- data.frame(gene_id=rownames(log1p_matrix)[i], module_name=rownames(eigengene_matrix)[j], rho=spearman_results$estimate[[1]], pvalue=spearman_results$p.value)
+        }
+    }
+
+    # Merge
+    correlation_dataframe <- correlation_results %>% bind_rows %>% arrange(pvalue)
+
+    # Write
+    fwrite(correlation_dataframe, file=outfile, sep='\t')
+
+}
+
 #######################################################
 #######################################################
 ########## S10. Isoform switching
