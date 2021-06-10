@@ -870,7 +870,7 @@ def createRmatsSummary(infiles, outfile):
 
 @transform('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv',
 		   regex(r'(.*)/s05-expression.dir/(.*)/all/.*.tsv'),
-		   r'\1/s08-wgcna.dir/\2/\2-soft_thresholds.rda')
+		   r'\1/s08-wgcna.dir/\2/network/\2-soft_thresholds_signed.rda')
 
 def pickSoftThresholds(infile, outfile):
 
@@ -884,8 +884,8 @@ def pickSoftThresholds(infile, outfile):
 # @follows(getGeneExpression)
 
 @transform(pickSoftThresholds,
-		   suffix('-soft_thresholds.rda'),
-		   '-gene_network.rda')
+		   regex(r'(.*)-soft_thresholds_(.*).rda'),
+		   r'\1-gene_network_\2.rda')
 
 def clusterGenes(infile, outfile):
 
@@ -899,13 +899,29 @@ def clusterGenes(infile, outfile):
 # @follows(getGeneExpression)
 
 @transform(clusterGenes,
-		   suffix('network.rda'),
-		   'modules.rda')
+		   suffix('.rda'),
+		   add_inputs(pickSoftThresholds),
+		   '_modules.rda')
 
-def getGeneModules(infile, outfile):
+def getGeneModules(infiles, outfile):
 
 	# Run
-	run_r_job('get_gene_modules', infile, outfile, modules=['R/4.0.3'], W='00:45', GB=15, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+	run_r_job('get_gene_modules', infiles, outfile, modules=['R/4.0.3'], W='00:45', GB=15, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 4. Get enrichment
+#############################################
+
+# @follows(getGeneExpression)
+
+@transform(getGeneModules,
+		   suffix('s.rda'),
+		   '_enrichment.rda')
+
+def runModuleEnrichment(infiles, outfile):
+
+	# Run
+	run_r_job('run_module_enrichment', infiles, outfile, run_locally=True)#, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
 #######################################################
 #######################################################

@@ -436,7 +436,7 @@ pick_soft_thresholds <- function(infile, outfile) {
 
     # Pick soft threshold
     powers <- 1:20
-    sft <- pickSoftThreshold(log1p_dataframe, powerVector=powers)
+    sft <- pickSoftThreshold(log1p_dataframe, powerVector=powers, networkType='signed')
 
     # Save
     save(sft, powers, log1p_dataframe, file=outfile)
@@ -456,11 +456,13 @@ cluster_genes <- function(infile, outfile) {
     load(infile)
 
     # Get adjacency
-    adjacency <- adjacency(log1p_dataframe, power = 6)
+    adjacency <- adjacency(log1p_dataframe, power = 10, type='signed')
 
     # Turn adjacency into topological overlap
-    TOM <- TOMsimilarity(adjacency);
+    TOM <- TOMsimilarity(adjacency, TOMType = "signed");
     dissTOM <- 1-TOM
+    rownames(dissTOM) <- colnames(log1p_dataframe)
+    colnames(dissTOM) <- colnames(log1p_dataframe)
 
     # Cluster genes
     geneTree <- hclust(as.dist(dissTOM), method = "average")
@@ -475,40 +477,82 @@ cluster_genes <- function(infile, outfile) {
 ########## 3. Get modules
 #############################################
 
-get_gene_modules <- function(infile, outfile) {
+get_gene_modules <- function(infiles, outfile) {
 
     # Library
     require(WGCNA)
 
     # Load
-    load(infile)
+    load(infiles[1])
+    load(infiles[2])
 
-    # Module identification using dynamic tree cut
-    dynamicMods <- cutreeDynamic(dendro = geneTree, distM = dissTOM, minClusterSize = 50, cutHeight=0.995)
-    dynamicColors <- labels2colors(dynamicMods)
+    # Find modules
+    initial_module_numbers <- cutreeDynamic(dendro = geneTree, distM = dissTOM, minClusterSize = 30, method = 'tree')
+    initial_module_colors <- labels2colors(initial_module_numbers)
 
-    # Calculate eigengenes
-    MEList <- moduleEigengenes(log1p_dataframe, colors = dynamicColors)
-    MEs <- MEList$eigengenes
-
-    # Calculate dissimilarity of module eigengenes and cluster
-    MEDiss <- 1-cor(MEs)
+    # Calculate and cluster eigengenes
+    MEList <- moduleEigengenes(log1p_dataframe, colors = initial_module_colors)
+    MEDiss <- 1-cor(MEList$eigengenes)
     METree <- hclust(as.dist(MEDiss), method = "average")
 
     # Merge eigengenes
-    MEDissThres <- 0.16
-    merge <- mergeCloseModules(log1p_dataframe, dynamicColors, cutHeight = MEDissThres, verbose = 3)
-
-    # Rename
-    moduleColors <- merge$colors;
-    MEs <- merge$newMEs;
-
-    # Construct numerical labels corresponding to the colors
+    MEDissThres <- 0.01
+    merge <- mergeCloseModules(log1p_dataframe, initial_module_colors, cutHeight = MEDissThres, verbose = 3)
     colorOrder <- c("grey", standardColors(50));
-    moduleLabels <- match(moduleColors, colorOrder)-1;
+    merged_module_colors <- merge$colors
+    merged_module_numbers <- match(merged_module_colors, colorOrder)-1;
+ 
+    # Modules
+    module_dataframe <- data.frame(gene_id=rownames(dissTOM), module_name=paste0('module_', merged_module_numbers), module_color=merged_module_colors)
+
+    # Modules
+    color_dataframe <- module_dataframe %>% select(module_name, module_color) %>% mutate(module_number=as.numeric(gsub('.*_(.*)', '\\1', module_name))) %>% distinct %>% arrange(module_number)
+
+    # Eigengenes
+    me_dataframe <- merge$newMEs
+    new_module_names <- color_dataframe %>% mutate(old_name=paste0('ME', module_color)) %>% pull(module_name, old_name)
+    colnames(me_dataframe) <- new_module_names[colnames(me_dataframe)]
+    me_dataframe <- me_dataframe[,new_module_names] %>% rownames_to_column('sample_name')
 
     # Save
-    save(MEs, moduleLabels, moduleColors, geneTree, file=outfile)
+    save(module_dataframe, color_dataframe, me_dataframe, merge, initial_module_colors, merged_module_colors, file=outfile)
+   
+    # Plot
+    pdf(gsub('.rda', '.pdf', outfile), onefile=TRUE, height=4, width=13)
+
+    # Initial clusters
+    plotDendroAndColors(geneTree, initial_module_colors, "Dynamic Tree Cut", dendroLabels = FALSE, hang = 0.03, addGuide = TRUE, guideHang = 0.05, main = "Gene dendrogram and module colors")
+    
+    # Plot module clustering
+    plot(METree, main = "Clustering of module eigengenes", xlab = "", sub = "")
+    abline(h=MEDissThres, col = "red")
+    
+    # Merged clusters
+    plotDendroAndColors(geneTree, cbind(initial_module_colors, merged_module_colors), c("Dynamic Tree Cut", "Merged dynamic"), dendroLabels = FALSE, hang = 0.03,addGuide = TRUE, guideHang = 0.05)
+    dev.off()
+
+}
+
+#############################################
+########## 4. Get enrichment
+#############################################
+
+run_module_enrichment <- function(infile, outfile) {
+
+    # Load
+    load(infile)
+
+    # Get modules
+    module_list <- split(module_dataframe$gene_id, module_dataframe$module_name)
+
+    # Run enrichment
+    gprofiler_results <- gprofiler2::gost(query = module_list, multi_query = FALSE)
+
+    # Save
+    save(gprofiler_results, file=outfile)
+
+    # Log
+    writeLines(capture.output(sessionInfo()), gsub('.rda', '.log', outfile))
 
 }
 
