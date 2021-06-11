@@ -784,77 +784,159 @@ def runDESeq2(infiles, outfiles, outfileRoot):
 ########## 1. Group bams
 #############################################
 
-#runStar
-@collate('arion/illumina/s04-alignment.dir/*/isoseq/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
-		 regex(r'(.*)/s04-alignment.dir/(.*)/(.*)/STAR/pass2/.*/.*?_(.*?)_.*.bam'),
-		 r'\1/s07-rmats.dir/\2/\3/bams/\2_\3-\4-bams.txt')
+# #runStar
+# @collate('arion/illumina/s04-alignment.dir/*/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
+# 		 regex(r'(.*)/s04-alignment.dir/(.*)/.*/STAR/pass2/.*/.*?_(.*?)_.*.bam'),
+# 		 r'\1/s09-rmats.dir/\2/bams/\2-\3-bams.txt')
 
-def groupBams(infiles, outfile):
+# def groupBams(infiles, outfile):
 
-	# Create directory
-	outdir = os.path.dirname(outfile)
-	if not os.path.exists(outdir):
-		os.makedirs(outdir)
+# 	# Create directory
+# 	outdir = os.path.dirname(outfile)
+# 	if not os.path.exists(outdir):
+# 		os.makedirs(outdir)
 
-	# Write
-	with open(outfile, 'w') as openfile:
-		openfile.write(','.join(infiles))
+# 	# # Write
+# 	# with open(outfile, 'w') as openfile: #.replace('2PN', '1C')
+# 	# 	openfile.write(','.join(infiles))
 
-#############################################
-########## 2. Run
-#############################################
+# #############################################
+# ########## 2. Run prep
+# #############################################
 
-def rmatsJobs():
-	for organism, comparisons in comparison_dict.items():
-		for source, reference_files in reference_dict[organism].items():
-			for comparison in comparisons:
-				infiles = []
-				for cell_type in comparison:
-					infiles.append('arion/illumina/s07-rmats.dir/{organism}/{source}/bams/{organism}_{source}-{cell_type}-bams.txt'.format(**locals()))
-				infiles.append(reference_files['gtf'])
-				outfile = 'arion/illumina/s07-rmats.dir/{organism}/{source}/results/{organism}_{source}-{comparison[0]}_vs_{comparison[1]}'.format(**locals())
-				yield [infiles, outfile]
+# # @follows(groupBams)
 
-# @follows(runStar)
+# @transform('arion/illumina/s09-rmats.dir/*/bams/*.txt',
+# 		  regex(r'(.*)/(s09-rmats.dir)/(.*)/bams/(.*).txt'),
+# 		  add_inputs(r'\1/s04-alignment.dir/\3/all/gtf/*.gtf'),
+# 		  r'\1/\2/\3/prep/\4')
 
-@files(rmatsJobs)
+# def runRmatsPrep(infiles, outfile):
 
-def runRmats(infiles, outfile):
+# 	# Read length
+# 	read_length = 125 if 'human' in outfile else 150
 
-	# Read length
-	read_length = 125 if 'human' in outfile else 150
+# 	# Command
+# 	outdir = outfile
+# 	cmd_str = '''python $RMATS_HOME/rmats.py --b1 {infiles[0]} --gtf {infiles[1]} --readLength {read_length} --variable-read-length --nthread 24 --od {outdir} --tmp {outdir}/tmp --task prep'''.format(**locals()) #--statoff 
 
-	# Command
-	cmd_str = '''python $RMATS_HOME/rmats.py --b1 {infiles[0]} --b2 {infiles[1]} --gtf {infiles[2]} --readLength {read_length} --nthread 24 --od {outfile} --tmp /tmp'''.format(**locals())
+# 	# Run
+# 	# print(cmd_str)
+# 	W = "01:00" if 'mouse' in outfile else "03:00"
+# 	run_job(cmd_str, outfile, W=W, GB=5, n=6, modules=['rmats/4.1.0'], stdout=os.path.join(outfile, 'job.log'), stderr=os.path.join(outfile, 'job.err'), jobname=os.path.basename(outfile)+'_rmats_prep', ow=False, print_outfile=False)
 
-	# Run
-	W = "01:00" if 'mouse' in outfile else "03:00"
-	run_job(cmd_str, outfile, W=W, GB=5, n=6, modules=['rmats/4.1.0'], stdout=os.path.join(outfile, 'job.log'), stderr=os.path.join(outfile, 'job.err'), jobname=os.path.basename(outfile)+'_rmats', ow=False, print_outfile=False, wait=False)
+# #############################################
+# ########## 3. Run post
+# #############################################
 
-# find arion/illumina/s07-rmats.dir -name "job.log" | js
+# def rmatsJobs():
+# 	for organism, comparisons in comparison_dict.items():
+# 		if organism == 'human':
+# 			for source, reference_files in reference_dict[organism].items():
+# 				for comparison in comparisons:
+# 					infiles = []
+# 					for cell_type in comparison:
+# 						infiles.append('arion/illumina/s09-rmats.dir/{organism}/bams/{organism}-{cell_type}-bams.txt'.format(**locals()))
+# 						infiles += glob.glob('arion/illumina/s09-rmats.dir/{organism}/prep/{organism}-{cell_type}-bams/tmp/*.rmats'.format(**locals()))
+# 					infiles += glob.glob('arion/illumina/s04-alignment.dir/{organism}/all/gtf/*-all-SJ_filtered.gtf'.format(**locals()))
+# 					outfile = 'arion/illumina/s09-rmats.dir/{organism}/post/{organism}-{comparison[0]}_vs_{comparison[1]}'.format(**locals())
+# 					yield [infiles, outfile]
+
+# # @follows(runStar, linkRmatsPrep)
+
+# @files(rmatsJobs)
+
+# def runRmatsPost(infiles, outfile):
+
+# 	# Split
+# 	bam_files = [infiles[0], infiles[2]]
+# 	prep_files = [os.path.join(os.getcwd(), x) for x in [infiles[1], infiles[3]]]
+# 	gtf_file = infiles[4]
+
+# 	# Get temp dir
+# 	tempdir = os.path.join(outfile, 'tmp')
+
+# 	# Read length
+# 	read_length = 125 if 'human' in outfile else 150
+
+# 	# Command
+# 	cmd_str = '''mkdir -p {tempdir} && ln -s {prep_files[0]} {tempdir} && ln -s {prep_files[1]} {tempdir} &&  \
+# 		python $RMATS_HOME/rmats.py \
+# 			--b1 {bam_files[0]} \
+# 			--b2 {bam_files[1]} \
+# 			--gtf {gtf_file} \
+# 			--readLength {read_length} \
+# 			--variable-read-length \
+# 			--nthread 24 \
+# 			--od {outfile} \
+# 			--tmp {tempdir} \
+# 			--task post '''.format(**locals()) #--statoff 
+
+# 	# Run
+# 	W = "01:00" if 'mouse' in outfile else "03:00"
+# 	if 'morula' in outfile and 'blastocyst' in outfile:
+# 		run_job(cmd_str, outfile, W=W, GB=5, n=6, modules=['rmats/4.1.0'], stdout=os.path.join(outfile, 'job.log'), stderr=os.path.join(outfile, 'job.err'), jobname=os.path.basename(outfile)+'_rmats_post', ow=False, print_cmd=False)
+
+# #############################################
+# ########## 2. Run
+# #############################################
+
+# def rmatsJobs():
+# 	for organism, comparisons in comparison_dict.items():
+# 		for source, reference_files in reference_dict[organism].items():
+# 			for comparison in comparisons:
+# 				infiles = []
+# 				for cell_type in comparison:
+# 					infiles.append('arion/illumina/s09-rmats.dir/{organism}/bams/{organism}-{cell_type}-bams.txt'.format(**locals()))
+# 				infiles.append(reference_files['gtf'])
+# 				outfile = 'arion/illumina/s09-rmats.dir/{organism}/results/{organism}-{comparison[0]}_vs_{comparison[1]}_stat'.format(**locals())
+# 				yield [infiles, outfile]
+
+# # @follows(runStar)
+
+# @files(rmatsJobs)
+
+# def runRmats(infiles, outfile):
+
+# 	# Read length
+# 	read_length = 125 if 'human' in outfile else 150
+
+# 	# Command
+# 	cmd_str = '''python $RMATS_HOME/rmats.py --b1 {infiles[0]} --b2 {infiles[1]} --gtf {infiles[2]} --readLength {read_length} --variable-read-length --nthread 24 --od {outfile} --tmp /tmp '''.format(**locals()) #--statoff 
+
+# 	# Run
+# 	# print(cmd_str)
+# 	W = "01:00" if 'mouse' in outfile else "03:00"
+# 	if 'morula' in outfile and 'blastocyst' in outfile:
+# 		run_job(cmd_str, outfile, W=W, GB=5, n=6, modules=['rmats/4.1.0'], stdout=os.path.join(outfile, 'job.log'), stderr=os.path.join(outfile, 'job.err'), jobname=os.path.basename(outfile)+'_rmats', ow=False, print_outfile=False, wait=False)
+
+# python $RMATS_HOME/rMATS_P/prepare_stat_inputs.py --new-output-dir arion/illumina/s09-rmats.dir/human/results/human-morula_vs_blastocyst/stats --old-output-dir arion/illumina/s09-rmats.dir/human/results/human-morula_vs_blastocyst --group-1-indices 0,1,2 --group-2-indices 3,4,5
+
+
+# find arion/illumina/s09-rmats.dir -name "job.log" | js
 
 #############################################
 ########## 3. Summary
 #############################################
 
-@follows(runRmats)
+# @follows(runRmats)
 
-@collate('arion/illumina/s07-rmats.dir/*/*/results/*/*.MATS.JC.txt',
-		 regex(r'(.*)/results/(.*)/.*.txt'),
-		 r'\1/summaries/\2-rmats_summary.tsv')
+# @collate('arion/illumina/s09-rmats.dir/*/*/results/*/*.MATS.JC.txt',
+# 		 regex(r'(.*)/results/(.*)/.*.txt'),
+# 		 r'\1/summaries/\2-rmats_summary.tsv')
 
-def createRmatsSummary(infiles, outfile):
+# def createRmatsSummary(infiles, outfile):
 
-	# Make summary
-	summary_dataframe = pd.concat([S.createRmatsSummary(x) for x in infiles])
+# 	# Make summary
+# 	summary_dataframe = pd.concat([S.createRmatsSummary(x) for x in infiles])
 
-	# Outdir
-	outdir = os.path.dirname(outfile)
-	if not os.path.exists(outdir):
-		os.makedirs(outdir)
+# 	# Outdir
+# 	outdir = os.path.dirname(outfile)
+# 	if not os.path.exists(outdir):
+# 		os.makedirs(outdir)
 
-	# Write
-	summary_dataframe.to_csv(outfile, sep='\t', index=False)
+# 	# Write
+# 	summary_dataframe.to_csv(outfile, sep='\t', index=False)
 
 #######################################################
 #######################################################
