@@ -98,15 +98,16 @@ def createRmatsSummary(rmats_file, filter_events=False):
 #######################################################
 
 #############################################
-########## 5. Summary
+########## 5. Event Summary
 #############################################
 
-def createSuppaSummary(basename, filter_events=False):
+def createSuppaSummary(basename, filter_events=False, event_type='AS'):
 
     # Read p-value
     pvalue_file = basename+'.dpsi'
     pvalue_dataframe = pd.read_table(pvalue_file).rename_axis('Event_id')
     pvalue_dataframe = pvalue_dataframe.rename(columns={x: x.split('_')[-1].replace('-', '') for x in pvalue_dataframe.columns}).reset_index()
+
     # Read PSI
     psi_file = basename+'.psivec'
     psi_dataframe = pd.read_table(psi_file).rename_axis('Event_id').reset_index()
@@ -123,11 +124,14 @@ def createSuppaSummary(basename, filter_events=False):
     # Merge
     result_dataframe = pvalue_dataframe.merge(tpm_dataframe, on='Event_id', how='left')#.merge(mean_psi_dataframe, on='Event_id', how='left')
 
-    # Add event type
-    result_dataframe['event_type'] = basename.split('-')[-1]
+    # Add AS-specific events, if not isoform results
+    if event_type == 'AS':
 
-    # Add coordinates
-    result_dataframe['igv_coordinates'] = ['chr{0}:{1}-{2}'.format(*[re.match('.*?-(.*?)-(.*?)-.*-(.*?)-.', x.replace(':', '-')).group(i) for i in [1,2,3]]) for x in result_dataframe['Event_id']]
+        # Add event type
+        result_dataframe['event_type'] = basename.split('-')[-1]
+
+        # Add coordinates
+        result_dataframe['igv_coordinates'] = ['chr{0}:{1}-{2}'.format(*[re.match('.*?-(.*?)-(.*?)-.*-(.*?)-.', x.replace(':', '-')).group(i) for i in [1,2,3]]) for x in result_dataframe['Event_id']]
 
     # Significance
     if filter_events:

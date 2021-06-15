@@ -106,6 +106,7 @@ reference_dict = {
 		'isoseq': {
 			'genome_fasta': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa',
 			'gtf': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.gtf',
+			'gtf_filtered': 'arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf',
 			'talon_abundance': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_abundance_filtered.tsv',
 			'talon_junctions': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_junctions.tsv',
 			'transcript_fasta': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.fasta',
@@ -124,6 +125,7 @@ reference_dict = {
 		'isoseq': {
 			'genome_fasta': 'arion/datasets/reference_genomes/mouse/Mus_musculus.GRCm38.dna_sm.primary_assembly.fa',
 			'gtf': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon.gtf',
+			'gtf_filtered': 'arion/illumina/s04-alignment.dir/mouse/all/gtf/Mus_musculus.GRCm38.102_talon-all-SJ_filtered.gtf',
 			'talon_abundance': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon_abundance_filtered.tsv',
 			'talon_junctions': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon_junctions.tsv',
 			'transcript_fasta': 'arion/isoseq/s05-talon.dir/mouse/Mus_musculus.GRCm38.102_talon.fasta',
@@ -656,25 +658,25 @@ def aggregateCounts(infiles, outfile):
 
 # find arion/illumina/s05-expression.dir/*/all -name "*counts*" | xargs rm
 
-# #############################################
-# ########## 3. Transcript TPM
-# #############################################
+#############################################
+########## 3. Transcript TPM
+#############################################
 
-# @transform(aggregateCounts,
-# 		   suffix('counts.rda'),
-# 		   'transcript_tpm.txt')
+@transform(aggregateCounts,
+		   suffix('counts.rda'),
+		   'transcript_tpm.txt')
 
-# def getTranscriptTPM(infile, outfile):
+def getTranscriptTPM(infile, outfile):
 
-# 	# Run
-# 	run_r_job('get_transcript_tpm', infile, outfile, run_locally=False, ow=False)
+	# Run
+	run_r_job('get_transcript_tpm', infile, outfile, conda_env='env', run_locally=False, ow=False)
 
-# #############################################
-# ########## 3. Gene counts
-# #############################################
+#############################################
+########## 4. Gene counts
+#############################################
 
-@transform('arion/illumina/s05-expression.dir/*/all/*-counts.rda',
-# @transform(aggregateCounts,
+# @transform('arion/illumina/s05-expression.dir/*/all/*-counts.rda',
+@transform(aggregateCounts,
 		   suffix('counts.rda'),
 		   'gene_normalized_counts.tsv')
 
@@ -773,6 +775,434 @@ def runDESeq2(infiles, outfiles, outfileRoot):
 # 			max_logfc = dataframe['log2FoldChange'].abs().max()
 # 			worksheet.conditional_format('E1:E'+str(len(dataframe.index)+1), {'type': '3_color_scale', 'min_value': -max_logfc, 'min_type': 'num', 'mid_value': 0, 'mid_type': 'num', 'max_value': max_logfc, 'max_type': 'num', 'min_color': '#67a9cf', 'mid_color': '#ffffff', 'max_color': '#ef8a62'})
 # 			worksheet.autofilter(0, 0, len(dataframe.index), len(dataframe.columns) - 1)
+
+#######################################################
+#######################################################
+########## S7. Enrichment
+#######################################################
+#######################################################
+
+#############################################
+########## 1. GO
+#############################################
+
+# @follows(runDESeq2)
+
+@transform('arion/illumina/s06-differential_expression.dir/*/all/*-gene-deseq.tsv',
+		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-gene-deseq.tsv'),
+		   r'\1/s07-enrichment.dir/\2/go/\3-go_enrichment.tsv')
+
+def runGoEnrichment(infile, outfile):
+
+	# Run
+	run_r_job('run_go_enrichment', infile, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 2. Domain
+#############################################
+
+# @follows(runDESeq2)
+
+@transform('arion/illumina/s06-differential_expression.dir/*/all/*-transcript-deseq.tsv',
+		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-transcript-deseq.tsv'),
+		   add_inputs(r'arion/isoseq/s07-pfam.dir/\2/\2-translated_pfam.tsv'),
+		   r'\1/s07-enrichment.dir/\2/domain/\3-domain_enrichment.tsv')
+
+def runDomainEnrichment(infiles, outfile):
+
+	# Run
+	run_r_job('run_domain_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+# #############################################
+# ########## 3. Repeats
+# #############################################
+
+# @follows(runDESeq2)
+
+@transform('arion/illumina/s06-differential_expression.dir/*/all/*-transcript-deseq.tsv',
+		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-transcript-deseq.tsv'),
+		   add_inputs(r'arion/isoseq/s08-repeatmasker.dir/\2/*_repeatmasker.tsv'),
+		   r'\1/s07-enrichment.dir/\2/repeat/\3-repeat_enrichment.tsv')
+
+def runRepeatEnrichment(infiles, outfile):
+
+	# Run
+	run_r_job('run_repeat_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#######################################################
+#######################################################
+########## S8. WGCNA
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Pick soft thresholds
+#############################################
+
+# @follows(getGeneExpression)
+
+@transform('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv',
+		   regex(r'(.*)/s05-expression.dir/(.*)/all/.*.tsv'),
+		   r'\1/s08-wgcna.dir/\2/network/\2-soft_thresholds_signed.rda')
+
+def pickSoftThresholds(infile, outfile):
+
+	# Run
+	run_r_job('pick_soft_thresholds', infile, outfile, modules=['R/4.0.3'], W='00:45', GB=25, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 2. Cluster genes
+#############################################
+
+# @follows(getGeneExpression)
+
+@transform(pickSoftThresholds,
+		   regex(r'(.*)-soft_thresholds_(.*).rda'),
+		   r'\1-gene_network_\2.rda')
+
+def clusterGenes(infile, outfile):
+
+	# Run
+	run_r_job('cluster_genes', infile, outfile, modules=['R/4.0.3'], W='00:45', GB=50, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 3. Get modules
+#############################################
+
+# @follows(getGeneExpression)
+
+@transform(clusterGenes,
+		   suffix('.rda'),
+		   add_inputs(pickSoftThresholds),
+		   '_modules.rda')
+
+def getGeneModules(infiles, outfile):
+
+	# Run
+	run_r_job('get_gene_modules', infiles, outfile, modules=['R/4.0.3'], W='00:45', GB=15, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 4. Get enrichment
+#############################################
+
+# @follows(getGeneExpression)
+
+@transform(getGeneModules,
+		   suffix('s.rda'),
+		   '_enrichment.rda')
+
+def runModuleEnrichment(infiles, outfile):
+
+	# Run
+	run_r_job('run_module_enrichment', infiles, outfile, run_locally=True)#, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 5. Get module correlations
+#############################################
+
+# @follows(getGeneExpression)
+
+@transform(getGeneModules,
+		   suffix('s.rda'),
+		   add_inputs('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv'),
+		   '_correlation.tsv')
+
+def getModuleCorrelations(infiles, outfile):
+
+	# Run
+	run_r_job('get_module_correlations', infiles, outfile, modules=['R/4.0.3'], stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+#######################################################
+#######################################################
+########## S9. SUPPA
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Index
+#############################################
+
+def suppaIndexJobs():
+	for organism, organism_references in reference_dict.items():
+		for file_format in ['ioi', 'ioe']:
+			infile = organism_references['isoseq']['gtf_filtered']
+			outdir = 'arion/illumina/s09-suppa.dir/{organism}/01-events/{file_format}/'.format(**locals())
+			yield [infile, outdir, file_format]
+
+# @follows(functionToFollow)
+
+@files(suppaIndexJobs)
+
+def buildSuppaIndex(infile, outdir, file_format):
+
+	# Basename
+	basename = outdir.split('/')[-4]
+
+	# Command
+	if file_format == 'ioe':
+		cmd_str = '''python $SUPPA_HOME/suppa.py generateEvents -i {infile} -o {outdir}{basename} -f {file_format} -e SE SS MX RI FL'''.format(**locals())
+	elif file_format == 'ioi':
+		cmd_str = '''python $SUPPA_HOME/suppa.py generateEvents -i {infile} -o {outdir}{basename} -f {file_format}'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outdir, W='00:15', modules=['suppa/2.3'], GB=10, n=1, stdout=os.path.join(outdir, 'job.log'), jobname='_'.join(outdir.split('/')[-4:]).replace('_01-events', ''), ow=True)
+
+#############################################
+########## 2. PSI
+#############################################
+
+def psiJobs():
+	for organism in ['human', 'mouse']:
+		tpm_file = 'arion/illumina/s05-expression.dir/{organism}/all/{organism}_all-transcript_tpm.txt'.format(**locals())
+		indices = glob.glob('arion/illumina/s09-suppa.dir/{organism}/01-events/io*/*.io?'.format(**locals()))
+		for suppa_index in indices:
+			file_format = suppa_index.split('.')[-1]
+			if file_format == 'ioe':
+				infiles = [tpm_file, suppa_index]
+				event_type = suppa_index.split('_')[-2]
+			elif file_format == 'ioi':
+				infiles = [tpm_file, reference_dict[organism]['isoseq']['gtf_filtered']]
+				event_type = 'isoform'
+			outfile = 'arion/illumina/s09-suppa.dir/{organism}/02-psi/{organism}_{event_type}.psi'.format(**locals())
+			yield [infiles, outfile, event_type] 
+
+@follows(buildSuppaIndex)
+
+@files(psiJobs)
+
+def getSuppaPSI(infiles, outfile, event_type):
+	
+	# Isoform
+	if event_type == 'isoform':
+		outname = outfile[:-len('_isoform.psi')]
+		cmd_str = 'python $SUPPA_HOME/suppa.py psiPerIsoform -g {infiles[1]} -e {infiles[0]} -o {outname}'.format(**locals())
+	# Event
+	else:
+		outname = outfile[:-len('.psi')]
+		cmd_str = 'python $SUPPA_HOME/suppa.py psiPerEvent --ioe-file {infiles[1]} --expression-file {infiles[0]} -o {outname}'.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, W="00:30", GB=10, n=1, modules=['suppa/2.3'], ow=False, stderr=outfile.replace('.psi', '.err'))
+
+#############################################
+########## 3. Split
+#############################################
+
+def splitJobs():
+	infiles = glob.glob('arion/illumina/s05-expression.dir/*/*/*-transcript_tpm.txt')+glob.glob('arion/illumina/s09-suppa.dir/*/02-psi/*.psi')
+	for infile in infiles:
+		infile_split = infile.split('/')
+		organism = infile_split[3]
+		basename = infile_split[-1].replace('-', '_').replace('.psi', '').replace('.txt', '').replace('all_', '')
+		outdir = 'arion/illumina/s09-suppa.dir/{organism}/03-split/{basename}'.format(**locals())
+		yield [infile, outdir, basename]
+
+# @follows(getTranscriptTPM, getSuppaPSI)
+
+@files(splitJobs)
+
+def splitData(infile, outdir, basename):
+
+	# Get metadata
+	dataframe = pd.read_table(infile)
+
+	# Get groups
+	group_dataframe = pd.DataFrame(dataframe.columns).rename(columns={0: 'sample'})
+	group_dataframe['cell_type'] = [x.split('_')[1].replace('2PN', '1C') for x in group_dataframe['sample']]
+	group_dict = group_dataframe.groupby('cell_type')['sample'].apply(lambda x: list(x))
+
+	# Loop
+	for cell_type, samples in group_dict.items():
+
+		# Get outfile
+		file_format = 'tsv' if 'tpm' in infile else 'psi'
+		outfile = '{outdir}/{basename}_{cell_type}.{file_format}'.format(**locals())
+
+		# Outdir
+		if not os.path.exists(outdir):
+			os.makedirs(outdir)
+		
+		# Subset and write
+		dataframe[samples].to_csv(outfile, sep='\t', index_label=False, na_rep='nan')
+
+#############################################
+########## 4. Differential splicing
+#############################################
+
+def suppaRunJobs():
+	for organism, comparisons in comparison_dict.items():
+		for event_type in ['isoform', 'A3', 'A5', 'AF', 'AL', 'MX', 'RI', 'SE']:
+			if event_type == 'isoform':
+				suppa_index = 'arion/illumina/s09-suppa.dir/{organism}/01-events/ioi/{organism}.ioi'.format(**locals())
+			else:
+				suppa_index = 'arion/illumina/s09-suppa.dir/{organism}/01-events/ioe/{organism}_{event_type}_strict.ioe'.format(**locals())
+			for comparison in comparisons:
+				infiles = []
+				for cell_type in comparison:
+					infiles.append('arion/illumina/s09-suppa.dir/{organism}/03-split/{organism}_{event_type}/{organism}_{event_type}_{cell_type}.psi'.format(**locals()))
+					infiles.append('arion/illumina/s09-suppa.dir/{organism}/03-split/{organism}_transcript_tpm/{organism}_transcript_tpm_{cell_type}.tsv'.format(**locals()))
+				infiles.append(suppa_index)
+				outfile = 'arion/illumina/s09-suppa.dir/{organism}/04-dpsi/{organism}-{comparison[0]}_vs_{comparison[1]}/{organism}-{comparison[0]}_vs_{comparison[1]}-{event_type}/{organism}-{comparison[0]}_vs_{comparison[1]}-{event_type}.psivec'.format(**locals())
+				yield [infiles, outfile]
+
+# @follows(splitData)
+
+@files(suppaRunJobs)
+
+def getDifferentialPSI(infiles, outfile):
+
+	# Full paths
+	infiles = [os.path.join(os.getcwd(), x) for x in infiles]
+
+	# Command
+	outname = os.path.join(os.getcwd(), outfile.rsplit('.', 1)[0])
+	
+	# Command
+	cmd_str = 'python $SUPPA_HOME/suppa.py diffSplice -m empirical --save_tpm_events --input {infiles[4]} --psi {infiles[0]} {infiles[2]} --tpm {infiles[1]} {infiles[3]} -gc -o {outname}'.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, W="03:00", GB=50, n=1, modules=['suppa/2.3', 'python/3.8.2'], stdout=outfile.replace('.psivec', '.log'), stderr=outfile.replace('.psivec', '.err'))
+
+# find arion/illumina/s09-suppa.dir/*/04-dpsi -name "*.log" | jsc
+# find arion/illumina/s09-suppa.dir/*/04-dpsi -name "*.log" | xargs wc -l
+# find arion/illumina/s09-suppa.dir/*/04-dpsi -name "*.err" | xargs wc -l
+
+# # ls /hpc/users/torred23/pipelines/projects/early-embryo/arion/illumina/s09-suppa.dir/*/*/04-dpsi/*/*/*.log | js | grep -v completed
+# find arion/illumina/s09-suppa.dir/mouse/ensembl/04-dpsi -name "*.psivec" | wc -l
+# # ls /hpc/users/torred23/pipelines/projects/early-embryo/arion/illumina/s09-suppa.dir/*/*/04-dpsi/*/*/*.err | lr | grep Error > error_samples.txt
+
+#############################################
+########## 5. Summary
+#############################################
+
+# getDifferentialPSI
+@collate('arion/illumina/s09-suppa.dir/*/04-dpsi/*/*/*.psivec',
+		 regex(r'(.*)/04-dpsi/(.*)/.*/.*.psivec'),
+		 r'\1/05-summaries/\2-suppa_summary.tsv')
+
+def createSuppaSummary(infiles, outfile):
+
+	# Make summary
+	summary_dataframe = pd.concat([S.createSuppaSummary(x[:-len('.psivec')]) for x in infiles if 'isoform' not in x])
+
+	# Outdir
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Write
+	summary_dataframe.to_csv(outfile, sep='\t', index=False)
+
+#############################################
+########## 6. Summary
+#############################################
+
+# getDifferentialPSI
+@transform('arion/illumina/s09-suppa.dir/*/04-dpsi/*/*/*isoform.psivec',
+		    regex(r'(.*)/04-dpsi/(.*)/.*/.*.psivec'),
+		    r'\1/05-summaries/\2-suppa_summary_isoform.tsv')
+
+def createSuppaIsoformSummary(infile, outfile):
+
+	# Make summary
+	summary_dataframe = S.createSuppaSummary(infile[:-len('.psivec')], event_type='isoform')
+
+	# Outdir
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Write
+	summary_dataframe.to_csv(outfile, sep='\t', index=False)
+
+#############################################
+########## 6. Cluster PSI
+#############################################
+
+@collate(createSuppaIsoformSummary,
+		 regex(r'(.*)/05-summaries/(human)-.*.tsv'),
+		 add_inputs(r'\1/02-psi/\2_isoform.psi'),
+		 r'\1/06-psi_clusters/\2_isoform-timepoints.rda')
+
+def clusterPSI(infiles, outfile):
+
+	# Split
+	summary_files = [x[0] for x in infiles]
+	psi_file = infiles[0][1]
+	infiles = [psi_file]+summary_files
+
+	# Run
+	run_r_job('cluster_psi', infiles, outfile, modules=['R/4.0.3'], W="02:00", GB=15, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 7. Get clusters
+#############################################
+
+@transform(clusterPSI,
+		   suffix('timepoints.rda'),
+		   'clusters.rda')
+
+def getPSIClusters(infile, outfile):
+
+	# Run
+	run_r_job('get_psi_clusters', infile, outfile, modules=['R/4.0.3'], W="01:00", GB=15, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#######################################################
+#######################################################
+########## S10. Isoform switching
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Filter
+#############################################
+
+def isoformFilterJobs():
+	for organism in ['human', 'mouse']:
+		filtered_gtf = glob.glob('arion/illumina/s04-alignment.dir/{organism}/all/gtf/*102_talon-all-SJ_filtered.gtf'.format(**locals()))[0]
+		for file_type in ['gtf_cds', 'cpat_predictions', 'pfam_predictions', 'transcript_fasta']:
+			infile = reference_dict[organism]['isoseq'][file_type]
+			infile_basename, infile_extension = os.path.basename(infile).rsplit('.', 1)
+			infiles = [infile, filtered_gtf]
+			outfile = 'arion/illumina/s10-isoform_switching.dir/{organism}/filtered_data/{infile_basename}_filtered.{infile_extension}'.format(**locals())
+			yield [infiles, outfile, file_type]
+
+@files(isoformFilterJobs)
+
+def filterIsoformData(infiles, outfile, file_type):
+
+	# Run
+	run_r_job('filter_isoform_data', infiles, outfile, additional_params=file_type, conda_env='env')
+
+#############################################
+########## 2. Load data
+#############################################
+
+@collate('arion/illumina/s10-isoform_switching.dir/human/filtered_data/*',
+		 regex(r'(.*)/(.*)/filtered_data/.*'),
+		 add_inputs(r'arion/illumina/s05-expression.dir/\2/all/\2_all-sample_metadata.txt', comparison_file),
+		 r'\1/\2/\2-isoforms.rda')
+
+def loadIsoformData(infiles, outfile):
+
+	# Split
+	infiles = [x[0] for x in infiles]+[infiles[0][1], infiles[0][2]]
+
+	# Run
+	run_r_job('load_isoform_data', infiles, outfile, conda_env='env', W="06:00", GB=30, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 3. Run
+#############################################
+
+@transform(loadIsoformData,
+		  suffix('.rda'),
+		  '_results.rda')
+
+def getIsoformSwitching(infile, outfile):
+
+	# Run
+	run_r_job('get_isoform_switching', infile, outfile, conda_env='env', W="06:00", GB=30, n=1, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
 #######################################################
 #######################################################
@@ -937,367 +1367,6 @@ def runDESeq2(infiles, outfiles, outfileRoot):
 
 # 	# Write
 # 	summary_dataframe.to_csv(outfile, sep='\t', index=False)
-
-#######################################################
-#######################################################
-########## S8. WGCNA
-#######################################################
-#######################################################
-
-#############################################
-########## 1. Pick soft thresholds
-#############################################
-
-# @follows(getGeneExpression)
-
-@transform('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv',
-		   regex(r'(.*)/s05-expression.dir/(.*)/all/.*.tsv'),
-		   r'\1/s08-wgcna.dir/\2/network/\2-soft_thresholds_signed.rda')
-
-def pickSoftThresholds(infile, outfile):
-
-	# Run
-	run_r_job('pick_soft_thresholds', infile, outfile, modules=['R/4.0.3'], W='00:45', GB=25, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
-
-#############################################
-########## 2. Cluster genes
-#############################################
-
-# @follows(getGeneExpression)
-
-@transform(pickSoftThresholds,
-		   regex(r'(.*)-soft_thresholds_(.*).rda'),
-		   r'\1-gene_network_\2.rda')
-
-def clusterGenes(infile, outfile):
-
-	# Run
-	run_r_job('cluster_genes', infile, outfile, modules=['R/4.0.3'], W='00:45', GB=50, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
-
-#############################################
-########## 3. Get modules
-#############################################
-
-# @follows(getGeneExpression)
-
-@transform(clusterGenes,
-		   suffix('.rda'),
-		   add_inputs(pickSoftThresholds),
-		   '_modules.rda')
-
-def getGeneModules(infiles, outfile):
-
-	# Run
-	run_r_job('get_gene_modules', infiles, outfile, modules=['R/4.0.3'], W='00:45', GB=15, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
-
-#############################################
-########## 4. Get enrichment
-#############################################
-
-# @follows(getGeneExpression)
-
-@transform(getGeneModules,
-		   suffix('s.rda'),
-		   '_enrichment.rda')
-
-def runModuleEnrichment(infiles, outfile):
-
-	# Run
-	run_r_job('run_module_enrichment', infiles, outfile, run_locally=True)#, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
-
-#############################################
-########## 5. Get module correlations
-#############################################
-
-# @follows(getGeneExpression)
-
-@transform(getGeneModules,
-		   suffix('s.rda'),
-		   add_inputs('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv'),
-		   '_correlation.tsv')
-
-def getModuleCorrelations(infiles, outfile):
-
-	# Run
-	run_r_job('get_module_correlations', infiles, outfile, modules=['R/4.0.3'], stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
-
-#######################################################
-#######################################################
-########## S8. SUPPA
-#######################################################
-#######################################################
-
-#############################################
-########## 1. Index
-#############################################
-
-# def suppaIndexJobs():
-# 	for organism, organism_references in reference_dict.items():
-# 		for source, reference_files in organism_references.items():
-# 			for file_format in ['ioi', 'ioe']:
-# 				infile = reference_files['gtf']
-# 				outdir = 'arion/illumina/s08-suppa.dir/{organism}/{source}/01-events/{file_format}/'.format(**locals())
-# 				yield [infile, outdir, file_format]
-
-# # @follows(functionToFollow)
-
-# @files(suppaIndexJobs)
-
-# def buildSuppaIndex(infile, outdir, file_format):
-
-# 	# Basename
-# 	basename = '_'.join(outdir.split('/')[-5:-3])
-
-# 	# Command
-# 	if file_format == 'ioe':
-# 		cmd_str = '''python $SUPPA_HOME/suppa.py generateEvents -i {infile} -o {outdir}/{basename} -f {file_format} -e SE SS MX RI FL'''.format(**locals())
-# 	elif file_format == 'ioi':
-# 		cmd_str = '''python $SUPPA_HOME/suppa.py generateEvents -i {infile} -o {outdir}/{basename} -f {file_format}'''.format(**locals())
-
-# 	# Run
-# 	run_job(cmd_str, outdir, W='00:15', modules=['suppa/2.3'], GB=10, n=1, stdout=os.path.join(outdir, 'job.log'), jobname='_'.join(outdir.split('/')[-5:]).replace('_01-events', ''), ow=True)
-
-# #############################################
-# ########## 2. PSI
-# #############################################
-
-# def psiJobs():
-# 	for organism in ['human', 'mouse']:
-# 		for reference in ['isoseq', 'ensembl']:
-# 			tpm_file = 'arion/illumina/s05-expression.dir/{organism}/{reference}/{organism}_{reference}-transcript_tpm.txt'.format(**locals())
-# 			indices = glob.glob('arion/illumina/s08-suppa.dir/{organism}/{reference}/01-events/io*/*.io?'.format(**locals()))
-# 			for suppa_index in indices:
-# 				file_format = suppa_index.split('.')[-1]
-# 				if file_format == 'ioe':
-# 					infiles = [tpm_file, suppa_index]
-# 					event_type = suppa_index.split('_')[-2]
-# 				elif file_format == 'ioi':
-# 					infiles = [tpm_file, reference_dict[organism][reference]['gtf']]
-# 					event_type = 'isoform'
-# 				outfile = 'arion/illumina/s08-suppa.dir/{organism}/{reference}/02-psi/{organism}_{reference}_{event_type}.psi'.format(**locals())
-# 				yield [infiles, outfile, event_type] 
-
-# # @follows(buildSuppaIndex)
-
-# @files(psiJobs)
-
-# def getSuppaPSI(infiles, outfile, event_type):
-	
-# 	# Isoform
-# 	if event_type == 'isoform':
-# 		outname = outfile[:-len('_isoform.psi')]
-# 		cmd_str = 'python $SUPPA_HOME/suppa.py psiPerIsoform -g {infiles[1]} -e {infiles[0]} -o {outname}'.format(**locals())
-# 	# Event
-# 	else:
-# 		outname = outfile[:-len('.psi')]
-# 		cmd_str = 'python $SUPPA_HOME/suppa.py psiPerEvent --ioe-file {infiles[1]} --expression-file {infiles[0]} -o {outname}'.format(**locals())
-
-# 	# Run
-# 	run_job(cmd_str, outfile, W="00:30", GB=10, n=1, modules=['suppa/2.3'], ow=False, stderr=outfile.replace('.psi', '.err'))
-
-# #############################################
-# ########## 3. Split
-# #############################################
-
-# def splitJobs():
-# 	infiles = glob.glob('arion/illumina/s05-expression.dir/*/*/*-transcript_tpm.txt')+glob.glob('arion/illumina/s08-suppa.dir/*/*/02-psi/*.psi')
-# 	for infile in infiles:
-# 		infile_split = infile.split('/')
-# 		organism = infile_split[3]
-# 		source = infile_split[4]
-# 		basename = infile_split[-1].replace('-', '_').replace('.psi', '').replace('.txt', '')
-# 		outdir = 'arion/illumina/s08-suppa.dir/{organism}/{source}/03-split/{basename}'.format(**locals())
-# 		yield [infile, outdir, basename]
-
-# # @follows(getTranscriptTPM, getSuppaPSI)
-
-# @files(splitJobs)
-
-# def splitData(infile, outdir, basename):
-
-# 	# Get metadata
-# 	dataframe = pd.read_table(infile)
-
-# 	# Get groups
-# 	group_dataframe = pd.DataFrame(dataframe.columns).rename(columns={0: 'sample'})
-# 	group_dataframe['cell_type'] = [x.split('_')[1] for x in group_dataframe['sample']]
-# 	group_dict = group_dataframe.groupby('cell_type')['sample'].apply(lambda x: list(x))
-
-# 	# Loop
-# 	for cell_type, samples in group_dict.items():
-
-# 		# Get outfile
-# 		file_format = 'tsv' if 'tpm' in infile else 'psi'
-# 		outfile = '{outdir}/{basename}_{cell_type}.{file_format}'.format(**locals())
-
-# 		# Outdir
-# 		if not os.path.exists(outdir):
-# 			os.makedirs(outdir)
-		
-# 		# Subset and write
-# 		dataframe[samples].to_csv(outfile, sep='\t', index_label=False, na_rep='nan')
-
-# #############################################
-# ########## 4. Differential splicing
-# #############################################
-
-# def suppaRunJobs():
-# 	for organism, comparisons in comparison_dict.items():
-# 		for source in ['isoseq']:
-# 			for event_type in ['isoform', 'A3', 'A5', 'AF', 'AL', 'MX', 'RI', 'SE']:
-# 				if event_type == 'isoform':
-# 					suppa_index = 'arion/illumina/s08-suppa.dir/{organism}/{source}/01-events/ioi/{organism}_{source}.ioi'.format(**locals())
-# 				else:
-# 					suppa_index = 'arion/illumina/s08-suppa.dir/{organism}/{source}/01-events/ioe/{organism}_{source}_{event_type}_strict.ioe'.format(**locals())
-# 				for comparison in comparisons:
-# 					infiles = []
-# 					for cell_type in comparison:
-# 						infiles.append('arion/illumina/s08-suppa.dir/{organism}/{source}/03-split/{organism}_{source}_{event_type}/{organism}_{source}_{event_type}_{cell_type}.psi'.format(**locals()))
-# 						infiles.append('arion/illumina/s08-suppa.dir/{organism}/{source}/03-split/{organism}_{source}_transcript_tpm/{organism}_{source}_transcript_tpm_{cell_type}.tsv'.format(**locals()))
-# 					infiles.append(suppa_index)
-# 					outfile = 'arion/illumina/s08-suppa.dir/{organism}/{source}/04-dpsi/{organism}_{source}-{comparison[0]}_vs_{comparison[1]}/{organism}_{source}-{comparison[0]}_vs_{comparison[1]}-{event_type}/{organism}_{source}-{comparison[0]}_vs_{comparison[1]}-{event_type}.psivec'.format(**locals())
-# 					yield [infiles, outfile]
-
-# # @follows(splitData)
-
-# @files(suppaRunJobs)
-
-# def getDifferentialPSI(infiles, outfile):
-
-# 	# Full paths
-# 	infiles = [os.path.join(os.getcwd(), x) for x in infiles]
-
-# 	# Command
-# 	outname = os.path.join(os.getcwd(), outfile.rsplit('.', 1)[0])
-	
-# 	# Command
-# 	cmd_str = 'python $SUPPA_HOME/suppa.py diffSplice -m empirical --save_tpm_events --input {infiles[4]} --psi {infiles[0]} {infiles[2]} --tpm {infiles[1]} {infiles[3]} -gc -o {outname}'.format(**locals())
-
-# 	# Run
-# 	run_job(cmd_str, outfile, W="03:00", GB=50, n=1, modules=['suppa/2.3', 'python/3.8.2'], stdout=outfile.replace('.psivec', '.log'), stderr=outfile.replace('.psivec', '.err'))
-
-# # rm -r /hpc/users/torred23/pipelines/projects/early-embryo/arion/illumina/s08-suppa.dir/*/*/04-dpsi/
-# # find arion/illumina/s08-suppa.dir/mouse/ensembl/04-dpsi -name "*.psivec" | wc -l
-# # find arion/illumina/s08-suppa.dir/mouse/ensembl/04-dpsi -name "*.log" | wc -l
-# # ls /hpc/users/torred23/pipelines/projects/early-embryo/arion/illumina/s08-suppa.dir/*/*/04-dpsi/*/*/*.log | js | grep -v completed
-# # ls /hpc/users/torred23/pipelines/projects/early-embryo/arion/illumina/s08-suppa.dir/*/*/04-dpsi/*/*/*.err | lr | grep Error > error_samples.txt
-
-# #############################################
-# ########## 5. Summary
-# #############################################
-
-# # getDifferentialPSI
-# @collate('arion/illumina/s08-suppa.dir/*/*/04-dpsi/*/*/*.psivec',
-# 		 regex(r'(.*)/04-dpsi/(.*)/.*/.*.psivec'),
-# 		 r'\1/05-summaries/\2-suppa_summary.tsv')
-
-# def createSuppaSummary(infiles, outfile):
-# 	print(outfile)
-
-# 	# Make summary
-# 	summary_dataframe = pd.concat([S.createSuppaSummary(x[:-len('.psivec')]) for x in infiles if 'isoform' not in x])
-
-# 	# Outdir
-# 	outdir = os.path.dirname(outfile)
-# 	if not os.path.exists(outdir):
-# 		os.makedirs(outdir)
-
-# 	# Write
-# 	summary_dataframe.to_csv(outfile, sep='\t', index=False)
-
-#######################################################
-#######################################################
-########## S9. Enrichment
-#######################################################
-#######################################################
-
-#############################################
-########## 1. GO
-#############################################
-
-# @follows(runDESeq2)
-
-@transform('arion/illumina/s06-differential_expression.dir/*/all/*-gene-deseq.tsv',
-		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-gene-deseq.tsv'),
-		   r'\1/s07-enrichment.dir/\2/go/\3-go_enrichment.tsv')
-
-def runGoEnrichment(infile, outfile):
-
-	# Run
-	run_r_job('run_go_enrichment', infile, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
-
-#############################################
-########## 2. Domain
-#############################################
-
-# @follows(runDESeq2)
-
-@transform('arion/illumina/s06-differential_expression.dir/*/all/*-transcript-deseq.tsv',
-		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-transcript-deseq.tsv'),
-		   add_inputs(r'arion/isoseq/s07-pfam.dir/\2/\2-translated_pfam.tsv'),
-		   r'\1/s07-enrichment.dir/\2/domain/\3-domain_enrichment.tsv')
-
-def runDomainEnrichment(infiles, outfile):
-
-	# Run
-	run_r_job('run_domain_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
-
-# #############################################
-# ########## 3. Repeats
-# #############################################
-
-# @follows(runDESeq2)
-
-@transform('arion/illumina/s06-differential_expression.dir/*/all/*-transcript-deseq.tsv',
-		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-transcript-deseq.tsv'),
-		   add_inputs(r'arion/isoseq/s08-repeatmasker.dir/\2/*_repeatmasker.tsv'),
-		   r'\1/s07-enrichment.dir/\2/repeat/\3-repeat_enrichment.tsv')
-
-def runRepeatEnrichment(infiles, outfile):
-
-	# Run
-	run_r_job('run_repeat_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
-
-# #######################################################
-# #######################################################
-# ########## S10. Isoform switching
-# #######################################################
-# #######################################################
-
-# #############################################
-# ########## 1. Load data
-# #############################################
-
-# def loadIsoformJobs():
-# 	for organism, organism_references in reference_dict.items():
-# 		for source, reference_files in organism_references.items():
-# 			if source == 'isoseq':
-# 				salmon_metadata_file = 'arion/illumina/s05-expression.dir/{organism}/isoseq/{organism}_isoseq-sample_metadata.txt'.format(**locals())
-# 				infiles = [salmon_metadata_file, reference_files['gtf_cds'], reference_files['transcript_fasta'], reference_files['cpat_predictions'], reference_files['pfam_predictions'], comparison_file]
-# 				outfile = 'arion/illumina/s10-isoform_switching.dir/{organism}/{source}/{organism}_{source}-isoforms.rda'.format(**locals())
-# 				yield [infiles, outfile]
-
-# # @follows(prepareSampleMetadata, runSalmon)
-
-# @files(loadIsoformJobs)
-
-# def loadIsoformData(infiles, outfile):
-
-# 	# Run
-# 	run_r_job('load_isoform_data', infiles, outfile, conda_env='env', W="06:00", GB=30, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
-
-# #############################################
-# ########## 2. Run
-# #############################################
-
-# @transform(loadIsoformData,
-# 		  suffix('.rda'),
-# 		  '_results.rda')
-
-# def getIsoformSwitching(infile, outfile):
-
-# 	# Run
-# 	run_r_job('get_isoform_switching', infile, outfile, conda_env='env', W="06:00", GB=30, n=1, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
 #######################################################
 #######################################################

@@ -598,9 +598,165 @@ get_module_correlations <- function(infiles, outfile) {
 
 #######################################################
 #######################################################
+########## S9. SUPPA
+#######################################################
+#######################################################
+
+#############################################
+########## 6. Cluster PSI
+#############################################
+
+cluster_psi <- function(infiles, outfile) {
+    
+    # Library
+    require(Mfuzz)
+    
+    # Read PSI
+    psi_dataframe <- fread(infiles[1]) %>% column_to_rownames('V1')
+    
+    # Read differential results
+    suppa_dataframe <- lapply(infiles[2:length(infiles)], function(x) {
+        fread(x) %>% mutate(comparison=gsub('.*/human-(.*)-.*.tsv', '\\1', x))
+    }) %>% bind_rows
+    
+    # Get significant events
+    significant_events <- suppa_dataframe %>% filter(pval < 0.05 & abs(dPSI) > 0.1) %>% pull(Event_id) %>% unique
+
+    # Filter
+    filtered_dataframe <- psi_dataframe[significant_events,]
+
+    # Sample dataframe
+    sample_dataframe <- data.frame(sample_name=colnames(filtered_dataframe)) %>% mutate(cell_type=gsub('2PN', '1C', gsub('human_(.*?)_.*', '\\1', sample_name)))
+
+    # Get average
+    average_dataframe <- filtered_dataframe %>% rownames_to_column('event_id') %>% pivot_longer(-event_id, names_to = 'sample_name', values_to = 'psi') %>% left_join(sample_dataframe, by='sample_name') %>% 
+        group_by(event_id, cell_type) %>% summarize(mean_psi=mean(psi, na.rm=TRUE)) %>% pivot_wider(id_cols = 'event_id', names_from = 'cell_type', values_from = 'mean_psi') %>% column_to_rownames('event_id')
+
+    # Get times
+    times <- c('1C'=0, '2C'=1, '4C'=2, '8C'=3, 'morula'=4, 'blastocyst'=5)
+
+    # Timepoint dataframe
+    timepoint_dataframe <- data.frame(sample_name=colnames(average_dataframe)) %>% rowwise %>% mutate(time=times[sample_name]) %>% column_to_rownames('sample_name')
+
+    # Convert
+    timepoint_annotation <- AnnotatedDataFrame(data=timepoint_dataframe)
+
+    # Variable metadata
+    varMetadata <- data.frame(labelDescription='Time')
+    rownames(varMetadata) <- 'time'
+
+    # Create expression set
+    eset <- ExpressionSet(assayData=as.matrix(average_dataframe), phenoData = timepoint_annotation, varMetadata = varMetadata)
+
+    # Filter
+    eset.r <- filter.NA(eset, thres=0.05)
+
+    # Replace NA
+    eset.f <- fill.NA(eset.r, mode="mean") #knnw
+
+    # Filter
+    eset.f2 <- filter.std(eset.f,min.std=0)
+
+    # Standardize
+    eset.s <- standardise(eset.f2)
+
+    # Estimate
+    m1 <- mestimate(eset.s)
+
+    # Set cluster range
+    cluster_ranges <- seq(5, 30, by=1)
+
+    # Selection
+    pdf(gsub('.rda', '.pdf', outfile), height=5, width=9)
+    dmin_results <- Dmin(eset.s, m=m1, crange=cluster_ranges, repeats=5, visu=TRUE)
+    cselection_results <- cselection(eset.s, m=m1, crange=cluster_ranges, repeats=5, visu=TRUE)
+    dev.off()
+
+    # Save
+    save(eset.s, m1, cluster_ranges, dmin_results, cselection_results, times, file=outfile)
+}
+
+#############################################
+########## 7. Get PSI clusters
+#############################################
+
+get_psi_clusters <- function(infile, outfile) {
+    
+    # Library
+    require(Mfuzz)
+
+    # Load
+    load(infile)
+
+    # Cluster
+    cluster_results <- mfuzz(eset.s, c=10, m=m1)
+    
+    # Selection
+    pdf(gsub('.rda', '.pdf', outfile), height=9, width=15)
+    mfuzz.plot(eset.s,cl=cluster_results,mfrow=c(4,4), new.window = FALSE, time.labels=names(times))
+    dev.off()
+
+    # Save
+    save(cluster_results, file=outfile)
+}
+
+#######################################################
+#######################################################
 ########## S10. Isoform switching
 #######################################################
 #######################################################
+
+#############################################
+########## 1. Filter
+#############################################
+
+filter_isoform_data <- function(infiles, outfile, file_type) {
+
+    # Get transcript ids
+    transcript_ids <- rtracklayer::readGFF(infiles[2]) %>% pull(transcript_id) %>% unique
+
+    # Read and filter
+    if (file_type == 'gtf_cds') {
+        
+        # Read GTF
+        gtf <- rtracklayer::import(infiles[1])
+        
+        # Filter
+        gtf_filtered <- gtf[gtf$transcript_id %in% transcript_ids]
+
+        # Export
+        rtracklayer::export(gtf_filtered, outfile, format='gtf')
+
+    } else if (file_type == 'cpat_predictions') {
+        
+        # Read CPAT
+        cpat_dataframe <- fread(infiles[1]) %>% filter(`Sequence Name` %in% transcript_ids) %>% mutate(`Data ID`=1:n()-1)
+        
+        # Write
+        fwrite(cpat_dataframe, file=outfile, sep='\t')
+        
+    } else if (file_type == 'pfam_predictions') {
+            
+        # Read Pfam
+        pfam_dataframe <- fread(infiles[1]) %>% filter(seq_id %in% transcript_ids)
+        
+        # Write
+        fwrite(pfam_dataframe, file=outfile, sep='\t')
+        
+    } else if (file_type == 'transcript_fasta') {
+
+        # Read FASTA
+        talon_fasta <- Biostrings::readDNAStringSet('arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.fasta', format="fasta")
+
+        # Subset
+        filtered_fasta <- talon_fasta[transcript_ids]
+
+        # Write
+        Biostrings::writeXStringSet(filtered_fasta, file=outfile)
+
+    }
+}
+
 
 #############################################
 ########## 1. Load data
@@ -613,14 +769,14 @@ load_isoform_data <- function(infiles, outfile) {
     suppressPackageStartupMessages(require(rjson))
 
     # Read metadata
-    metadata_dataframe <- fread(infiles[1])
+    metadata_dataframe <- fread(infiles[5])
 
     # Read expression
     salmon_infiles <- metadata_dataframe %>% pull(files, names)
     salmonQuant <- importIsoformExpression(sampleVector = salmon_infiles)
 
     # Get organism
-    organism <- gsub('.*/(.*?)_.*', '\\1', infiles[1])
+    organism <- gsub('.*.dir/(.*?)/.*', '\\1', infiles[1])
 
     # Get metadata
     if (organism == 'mouse') {
@@ -629,6 +785,7 @@ load_isoform_data <- function(infiles, outfile) {
         design_dataframe <- metadata_dataframe %>% dplyr::rename('sampleID'='names', 'condition'='cell_type') %>% dplyr::select(sampleID, condition, batch)
     }
     design_dataframe <- design_dataframe %>% mutate(condition=paste0('embryo_', condition))
+
 
     # Read comparisons
     comparison_dataframe <- fromJSON(file = infiles[6])[[organism]]%>% as.data.frame %>% apply(1, function(x) paste0('embryo_', x)) %>% as.data.frame %>% dplyr::rename('condition_1'='V1', 'condition_2'='V2')
@@ -648,7 +805,7 @@ load_isoform_data <- function(infiles, outfile) {
     # Add CPAT
     aSwitchList <- analyzeCPAT(
         switchAnalyzeRlist   = aSwitchList,
-        pathToCPATresultFile = infiles[4],
+        pathToCPATresultFile = infiles[1],
         codingCutoff         = ifelse(organism=='human', 0.364, 0.44),
         removeNoncodinORFs   = FALSE   # because ORF was added from CPAT
     )
@@ -656,7 +813,7 @@ load_isoform_data <- function(infiles, outfile) {
     # Add Pfam
     aSwitchList <- analyzePFAM(
         switchAnalyzeRlist   = aSwitchList,
-        pathToPFAMresultFile = infiles[5],
+        pathToPFAMresultFile = infiles[4],
         showProgress=FALSE
     )
 
