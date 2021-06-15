@@ -264,8 +264,8 @@ def fixXiaNames(infiles, outfile):
 def downloadXia(infile, outfiles, outfileRoot):
 
 	# Read metadata file
-	metadata_dataframe = pd.read_csv(infile).query('AvgSpotLen <= 200')
-	metadata_dataframe = metadata_dataframe[['H3K27me3' in x for x in metadata_dataframe['sample_name_AvgSpotLen']]]
+	metadata_dataframe = pd.read_csv(infile)
+	# metadata_dataframe = metadata_dataframe[['H3K27me3' in x for x in metadata_dataframe['sample_name_AvgSpotLen']]]
 
 	# Loop
 	for index, rowData in metadata_dataframe.iterrows():
@@ -276,7 +276,7 @@ def downloadXia(infile, outfiles, outfileRoot):
 
 		# Run
 		if len(glob.glob(outfile_pattern)) == 0:
-			
+
 			# Create directory
 			if not os.path.exists(outdir):
 				os.makedirs(outdir)
