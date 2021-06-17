@@ -30,8 +30,8 @@ import lsf
 # 2.2 Default parameters
 r_source = 'pipeline/scripts/embryo-chipseq.R'
 py_source = 'pipeline/scripts/EmbryoChipseq.py'
-P = 'acc_GuccioneLab'
-q = 'express'
+P = 'acc_apollo'
+q = 'sla'
 W = '00:30'
 GB = 5
 n = 1
@@ -102,7 +102,9 @@ def linkFASTQ(infile, outfile):
 	outdir = os.path.dirname(outfile)
 
 	# Create
-	os.system('mkdir -p {outdir} && ln -s {infile} {outfile}'.format(**locals()))
+	if not os.path.exists(outfile):
+		print(outfile)
+		# os.system('mkdir -p {outdir} && ln -s {infile} {outfile}'.format(**locals()))
 
 #############################################
 ########## 2. Adapter trimming
@@ -123,13 +125,14 @@ def trimIlluminaAdapters(infiles, outdir):
 
 	# Command
 	if len(infiles) == 1:
-		cmd_str = '''trim_galore --nextera --cores 6 --output_dir {outdir} {infiles[0]}'''.format(**locals())
+		cmd_str = '''trim_galore --cores 6 --output_dir {outdir} {infiles[0]}'''.format(**locals())
 	elif len(infiles) == 2:
-		cmd_str = '''trim_galore --nextera --paired --cores 6 --output_dir {outdir} {infiles[0]} {infiles[1]}'''.format(**locals())
+		cmd_str = '''trim_galore --paired --cores 6 --output_dir {outdir} {infiles[0]} {infiles[1]}'''.format(**locals())
 
 	# Run
-	print(cmd_str)
-	# run_job(cmd_str, outdir, modules=['trim_galore/0.6.6'], W='02:00', GB=6, n=6, stdout=os.path.join(outdir, 'job.log'), stderr=os.path.join(outdir, 'job.err'))
+	run_job(cmd_str, outdir, modules=['trim_galore/0.6.6'], W='10:00', GB=6, n=6, print_outfile=True, stdout=os.path.join(outdir, 'job.log'), stderr=os.path.join(outdir, 'job.err'))
+
+# find arion/chipseq/s01-fastq.dir/human/trimmed -name "*.log" | jsc
 
 #######################################################
 #######################################################
@@ -141,7 +144,7 @@ def trimIlluminaAdapters(infiles, outdir):
 ########## 1. FASTQC
 #############################################
 
-# @follows(linkFASTQ, trimIlluminaAdapters)
+@follows(linkFASTQ, trimIlluminaAdapters)
 
 @transform(all_illumina_fastq,
 		   regex(r'(.*)/s01-fastq.dir/(.*).f.*q.gz'),
@@ -153,9 +156,9 @@ def runFastQC(infile, outfile):
 	cmd_str = '''fastqc --outdir=$(dirname {outfile}) {infile}'''.format(**locals())
 	
 	# Run
-	run_job(cmd_str, outfile, modules=['fastqc/0.11.8'], W='03:00', GB=12, n=1, print_outfile=True)
+	run_job(cmd_str, outfile, modules=['fastqc/0.11.8'], W='03:00', GB=12, n=1, print_outfile=False)
 
-# ls arion/chipseq/s02-fastqc.dir/human/raw | wc -l
+# find arion/chipseq/s02-fastqc.dir/human -name "*fastqc.html" | wc -l
 
 #############################################
 ########## 2. MultiQC
@@ -166,12 +169,8 @@ def runFastQC(infile, outfile):
 def qcJobs():
 	filelist = [
 		['arion/chipseq/s02-fastqc.dir/human/raw', 'arion/chipseq/multiqc/human_fastqc/multiqc_report.html'],
-		# ['arion/chipseq/s02-fastqc.dir/human/trimmed', 'arion/chipseq/multiqc/human_fastqc_trimmed/multiqc_report.html'],
-		# ['arion/chipseq/s03-alignment.dir/human/bowtie2', 'arion/chipseq/multiqc/human_alignment/multiqc_report.html'],
-		# ['arion/illumina/s02-fastqc.dir/human/trimmed', 'arion/illumina/multiqc/human_fastqc_trimmed/multiqc_report.html'],
-		# ['arion/illumina/s02-fastqc.dir/mouse/trimmed', 'arion/illumina/multiqc/mouse_fastqc_trimmed/multiqc_report.html'],
-		# ['arion/illumina/s04-alignment.dir/human', 'arion/illumina/multiqc/human_alignment_trimmed/multiqc_report.html'],
-		# ['arion/illumina/s04-alignment.dir/mouse', 'arion/illumina/multiqc/mouse_alignment_trimmed/multiqc_report.html'],
+		['arion/chipseq/s02-fastqc.dir/human/trimmed', 'arion/chipseq/multiqc/human_fastqc_trimmed/multiqc_report.html'],
+		['arion/chipseq/s03-alignment.dir/human', 'arion/chipseq/multiqc/human_alignment_trimmed/multiqc_report.html']
 	]
 	for files in filelist:
 		yield [files[0], files[1]]
@@ -197,11 +196,12 @@ def runMultiQC(infile, outfile):
 ########## 1. Bowtie
 #############################################
 
-# @follows(trimIlluminaAdapters, buildBowtieIndex)
+# @follows(trimIlluminaAdapters)
 
-# @collate('arion/chipseq/s01-fastq.dir/human/trimmed/*/*_trimmed.fq.gz',
-@collate('arion/chipseq/s01-fastq.dir/human/raw/*/*.fastq.gz',
- 		 regex(r'(.*)/s01-fastq.dir/(.*)/raw/(.*)/.*.fastq.gz'),
+# @collate('arion/chipseq/s01-fastq.dir/human/raw/*/*.fastq.gz',
+# @collate('arion/chipseq/s01-fastq.dir/human/trimmed/human_4C_3PN_H3K27me3_Rep1_50/*.fq.gz',
+@collate('arion/chipseq/s01-fastq.dir/human/trimmed/*/*.fq.gz',
+ 		 regex(r'(.*)/s01-fastq.dir/(.*)/trimmed/(.*)/.*.fq.gz'),
 		 add_inputs(r'arion/atacseq/s03-alignment.dir/\2/bowtie2/index/*primary_assembly.1.bt2'),
 		 r'\1/s03-alignment.dir/\2/bowtie2/results/\3/\3.bam')
 
@@ -216,16 +216,17 @@ def runBowtie(infiles, outfile):
 	if len(fastq) == 1:
 		fastq_str = '-U {fastq[0]}'.format(**locals())
 	elif len(fastq) == 2:
-		fastq_str = '-1 {fastq[0]} -2 {fastq[1]}'.format(**locals())
+		fastq_str = '-1 {fastq[0]} -2 {fastq[1]} -X 1000 --no-mixed --no-discordant'.format(**locals())
 
 	# Command
-	cmd_str = '''bowtie2 -x {bowtie_index} {fastq_str} -q -p 40 | samtools view -bS --threads 40 | samtools sort --threads 40 -o {outfile} && \
+	cmd_str = '''bowtie2 -x {bowtie_index} {fastq_str} -N 1 -q -p 40 | samtools view -bS --threads 40 | samtools sort --threads 40 -o {outfile} && \
 		samtools index -b {outfile} && samtools flagstat {outfile} > {outname}.flagstat && samtools idxstats {outfile} > {outname}.idxstats && samtools stats {outfile} > {outname}.stats && samtools view {outfile} | cut -f5 | sort | uniq -c | sort -b -k2,2n | sed -e 's/^[ \\t]*//' > {outname}.mapq'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W='03:00', n=10, GB=5, modules=['bowtie2/2.4.1', 'samtools/1.9'], stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'), print_cmd=False, ow=False)
+	run_job(cmd_str, outfile, W='10:00', n=10, GB=5, modules=['bowtie2/2.4.1', 'samtools/1.9'], stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'), print_outfile=False, ow=False)
 
-# find arion/chipseq/s03-alignment.dir/human/bowtie2/results -name "*.log" | js
+# Publication parameters: -N 1 -L 25 (single end), -N 1 -L 25 -X 1000 --no-mixed --no-discordant (paired end), -N maximum number of mismatches, -L seed length, -X maximum fragment length
+# find arion/chipseq/s03-alignment.dir/human/bowtie2/results -name "*.log" | jsc
 
 #############################################
 ########## 2. Filter
@@ -238,8 +239,8 @@ def runBowtie(infiles, outfile):
 # "mapping_quality >= 30"
 # fragment lengths is empty for single end data
 
-# @transform(runBowtie,
-@transform('arion/chipseq/s03-alignment.dir/human/bowtie2/results/*/*0.bam',
+# @transform('arion/chipseq/s03-alignment.dir/human/bowtie2/results/*/*0.bam',
+@transform(runBowtie,
 		   suffix('.bam'),
 		   '_filtered.bam')
 
@@ -253,13 +254,18 @@ def filterBam(infile, outfile):
 		samtools index -b {outfile} && samtools flagstat {outfile} > {outname}.flagstat && samtools idxstats {outfile} > {outname}.idxstats && samtools stats {outfile} > {outname}.stats && samtools view {outfile} | awk '$9>0' | cut -f9 | sort | uniq -c | sort -b -k2,2n | sed -e 's/^[ \\t]*//' > {outname}.fragment_lengths.txt'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W='03:00', n=5, GB=5, modules=['samtools/1.9', 'sambamba/0.5.6'], print_outfile=True)
+	run_job(cmd_str, outfile, W='03:00', n=5, GB=5, modules=['samtools/1.9', 'sambamba/0.5.6'])#, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'), print_outfile=False)
+
+# find arion/chipseq/s03-alignment.dir -name "*filtered*" | xargs rm
+
+# find arion/chipseq/s03-alignment.dir/human/bowtie2/results -name "_filtered.log" | js
 
 #############################################
 ########## 3. Create BigWig
 #############################################
 
-@transform(filterBam,
+# @transform(filterBam,
+@transform('arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/*_filtered.bam',
 		   suffix('.bam'),
 		   add_inputs('/sc/arion/projects/GuccioneLab/genome-indices/hg38/blacklists/hg38-blacklist.v2.bed'),
 		   '.bw')
@@ -272,6 +278,10 @@ def createBigWig(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, conda_env='env', W='06:00', n=8, GB=4, print_outfile=False)
 
+# find arion/chipseq/s03-alignment_old.dir/ -name "*.bw"
+
+# ls /hpc/users/torred23/pipelines/projects/early-embryo/embryo-chipseq/arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/*.bw
+
 #######################################################
 #######################################################
 ########## S4. Peaks
@@ -282,30 +292,34 @@ def createBigWig(infiles, outfile):
 ########## 1. MACS2
 #############################################
 
-# @collate(filterBam,
-# 		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/(.*)_Rep.*/.*_filtered.bam'),
-# 		 r'\1/s04-peaks.dir/\2/macs2/\3/\3_peaks.xls')
+# @transform(filterBam,
+# @transform('arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/human_4C_*1_*50_filtered.bam',
+@transform('arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/*_filtered.bam',
+		   regex(r'(.*)/s03-alignment_old.dir/(.*)/bowtie2/results/(.*)/.*.bam'),
+		   r'\1/s04-peaks.dir/\2/macs2/\3/\3_peaks.xls')
 
-# def runMacs2(infiles, outfile):
+def runMacs2(infile, outfile):
 
-# 	# Infiles
-# 	infiles_str = ' '.join(infiles)
-# 	basename = outfile.replace('_peaks.xls', '')
-# 	organism = outfile.split('/')[-4].replace('human', 'hs').replace('mouse', 'mm')
+	# Base settings
+	basename = outfile.replace('_peaks.xls', '')
+	organism = outfile.split('/')[-4].replace('human', 'hs').replace('mouse', 'mm')
 
-# 	# Command
-# 	cmd_str = ''' macs2 callpeak \
-# 		-t {infiles_str}\
-# 		-f BAM \
-# 		--nomodel \
-# 		--nolambda \
-# 		--extsize 250 \
-# 		-q 0.01 \
-# 		-n {basename} \
-# 		-g {organism}'''.format(**locals())
+	# Specific settings
+	file_type = 'BAM' if '_50' in infile else 'BAMPE'
+	additional_parameters = '--broad --broad-cutoff 0.05' if 'H3K27me3' in infile else ''
+	
+	# Command
+	cmd_str = ''' macs2 callpeak \
+		-t {infile} \
+		-f {file_type} \
+		--nomodel \
+		--nolambda \
+		{additional_parameters} \
+		-n {basename} \
+		-g {organism} '''.format(**locals())
 
-# 	# Run
-# 	run_job(cmd_str, outfile, modules=['macs/2.1.0'], W='06:00', n=1, GB=30, print_cmd=False, stdout=outfile.replace('.xls', '.log'), stderr=outfile.replace('.xls', '.err'))
+	# Run
+	run_job(cmd_str, outfile, modules=['macs/2.1.0'], W='06:00', n=1, GB=30, print_cmd=False, stdout=outfile.replace('.xls', '.log'), stderr=outfile.replace('.xls', '.err'))
 
 #######################################################
 #######################################################
