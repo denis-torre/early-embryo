@@ -13,14 +13,45 @@
 
 #######################################################
 #######################################################
-########## S1. 
+########## S5. Peak Counts
 #######################################################
 #######################################################
 
 #############################################
-########## 1. 
+########## 2. Get counts
 #############################################
 
+get_peak_counts <- function(infile, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(DiffBind))
+    
+    # Read data
+    chip <- dba(sampleSheet=infile)
+
+    # Add blacklist
+    chip <- dba.blacklist(chip, blacklist=DBA_BLACKLIST_HG38, greylist=FALSE)
+
+    # Count
+    chip <- dba.count(chip, summits=500, bUseSummarizeOverlaps=FALSE)
+
+    # Save
+    save(chip, file=outfile)
+
+}
+
+#############################################
+########## 3. Get size factors
+#############################################
+
+get_size_factors <- function(infile, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(DiffBind))
+    
+
+
+}
 
 #######################################################
 #######################################################

@@ -257,7 +257,6 @@ def filterBam(infile, outfile):
 	run_job(cmd_str, outfile, W='03:00', n=5, GB=5, modules=['samtools/1.9', 'sambamba/0.5.6'])#, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'), print_outfile=False)
 
 # find arion/chipseq/s03-alignment.dir -name "*filtered*" | xargs rm
-
 # find arion/chipseq/s03-alignment.dir/human/bowtie2/results -name "_filtered.log" | js
 
 #############################################
@@ -279,7 +278,6 @@ def createBigWig(infiles, outfile):
 	run_job(cmd_str, outfile, conda_env='env', W='06:00', n=8, GB=4, print_outfile=False)
 
 # find arion/chipseq/s03-alignment_old.dir/ -name "*.bw"
-
 # ls /hpc/users/torred23/pipelines/projects/early-embryo/embryo-chipseq/arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/*.bw
 
 #######################################################
@@ -320,6 +318,95 @@ def runMacs2(infile, outfile):
 
 	# Run
 	run_job(cmd_str, outfile, modules=['macs/2.1.0'], W='06:00', n=1, GB=30, print_cmd=False, stdout=outfile.replace('.xls', '.log'), stderr=outfile.replace('.xls', '.err'))
+
+# find arion/chipseq/s04-peaks.dir/human/macs2 -name "*.log" | jsc
+# find arion/chipseq/s04-peaks.dir/human/macs2 -name "*peaks.xls" | wc -l
+
+#############################################
+########## 2. Rename
+#############################################
+
+@transform('arion/chipseq/s04-peaks.dir/human/macs2--nolambda--nomodel/*/*_peaks.xls',
+		   suffix('.xls'),
+		   '.chr.xls')
+
+def renamePeaks(infile, outfile):
+
+	# Read peaks
+	peak_dataframe = pd.read_table(infile, comment='#')
+
+	# Add chromosome
+	peak_dataframe['chr'] = ['chr{x}'.format(**locals()) for x in peak_dataframe['chr']]
+	peak_dataframe['name'] = [os.path.basename(x) for x in peak_dataframe['name']]
+
+	# Write
+	peak_dataframe.to_csv(outfile, sep='\t', index=False)
+
+#######################################################
+#######################################################
+########## S5. Peak Counts
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Sample dataframe
+#############################################
+
+@collate('arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/*_filtered.bam',
+		 regex(r'(.*)/s03-alignment_old.dir/(.*)/bowtie2/results/.*.bam'),
+		 r'\1/s05-counts.dir/\2/\2-chipseq_samples.csv')
+
+def getSampleMetadata(infiles, outfile):
+
+	# Sample dataframe
+	sample_dataframe = pd.DataFrame([{
+			'SampleID': x.split('/')[-2],
+			'bamReads': x,
+			'PeakCaller': 'macs',
+			'PeakFormat': 'macs'
+		} for x in infiles])
+
+	# Add information
+	sample_dataframe['Tissue'] = [x.split('_')[1].replace('control', 'control_8C').replace('TBE', 'TBE_8C') for x in sample_dataframe['SampleID']]
+	sample_dataframe['Condition'] = [x.split('_H3')[0].split('_')[-1] for x in sample_dataframe['SampleID']]
+	sample_dataframe['Peaks'] = ['arion/chipseq/s04-peaks.dir/human/macs2--nolambda--nomodel/{x}/{x}_peaks.chr.xls'.format(**locals()) for x in sample_dataframe['SampleID']]
+	# sample_dataframe['Peaks'] = ['arion/atacseq/s04-peaks.dir/human/genrich/combined/'+x.split('_Rep')[0]+'/'+x.split('_Rep')[0]+'-genrich.chr.narrowPeak' for x in sample_dataframe['SampleID']]
+
+	# Outdir
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Write
+	# pd.set_option('max.colwidth', -1)
+	# print(sample_dataframe)
+	sample_dataframe.to_csv(outfile, index=False)
+
+#############################################
+########## 2. Get counts
+#############################################
+
+@transform(getSampleMetadata,
+		   suffix('_samples.csv'),
+		   '_peak_counts.rda')
+
+def getPeakCounts(infile, outfile):
+
+	# Run
+	run_r_job('get_peak_counts', infile, outfile, conda_env='env', W='06:00', GB=100, n=1, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 3. Get size factors
+#############################################
+
+@transform(getPeakCounts,
+		   suffix('_peak_counts.rda'),
+		   '_size_factors.tsv')
+
+def getSizeFactors(infile, outfile):
+
+	# Run
+	run_r_job('get_size_factors', infile, outfile, conda_env='env', W='00:30', GB=50, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
 #######################################################
 #######################################################

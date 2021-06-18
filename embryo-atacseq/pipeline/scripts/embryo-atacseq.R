@@ -22,6 +22,117 @@ suppressPackageStartupMessages(require(tidyr))
 #######################################################
 #######################################################
 
+#######################################################
+#######################################################
+########## S5. Peak Counts
+#######################################################
+#######################################################
+
+#############################################
+########## 2. Get counts
+#############################################
+
+get_peak_counts <- function(infile, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(DiffBind))
+    
+    # Read data
+    atac <- dba(sampleSheet=infile)
+
+    # Add blacklist
+    atac <- dba.blacklist(atac, blacklist=DBA_BLACKLIST_HG38, greylist=FALSE)
+
+    # Get consensus peakset maybe - or not
+
+    # Count
+    atac <- dba.count(atac, summits=500, bUseSummarizeOverlaps=FALSE)
+
+    # Save
+    save(atac, file=outfile)
+
+}
+
+#############################################
+########## 3. Get size factors
+#############################################
+
+get_size_factors <- function(infile, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(DiffBind))
+
+    # Load
+    load(infile)
+
+    # Get count matrix
+    count_matrix <- dba.peakset(dba.count(atac, peaks=NULL, score=DBA_SCORE_READS), bRetrieve=TRUE, DataType=DBA_DATA_FRAME) %>% mutate(CHR=glue('{CHR}:{START}-{END}')) %>% select(-START, -END) %>% column_to_rownames('CHR') %>% as.matrix
+
+    # Get normalization factors (if you prefer to use the DESeq2 strategy use method="RLE" instead)
+    normalization_factors <- edgeR::calcNormFactors(object = count_matrix, method = "TMM")
+
+    # Library size
+    library_sizes <- colSums(count_matrix)
+
+    # Create dataframe
+    normalization_dataframe <- data.frame(normalization_factor=normalization_factors, library_size=library_sizes) %>% rownames_to_column('sample_name') %>% mutate(size_factor=normalization_factor*library_size/1000000, size_factor_reciprocal=1/size_factor)
+
+    # Write
+    fwrite(normalization_dataframe, file=outfile, sep='\t')
+
+
+}
+
+#######################################################
+#######################################################
+########## S5. TSS coverage
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Get TSS BED
+#############################################
+
+get_tss_bed <- function(infile, outfile) {
+
+    # Read GTF
+    gtf <- rtracklayer::readGFF(infile)
+
+    # Extract TSSs
+    tss_dataframe <- gtf %>% filter(type=='exon') %>% group_by(transcript_id, strand) %>% summarize(chr=seqid, strand=strand, tss=ifelse(strand=='+', min(start), max(end))) %>% distinct %>% mutate(start=tss, end=tss+1, score=100) %>% select(chr, start, end, transcript_id, score, strand)
+
+    # Write
+    fwrite(tss_dataframe, file=outfile, sep='\t', col.names=FALSE)
+
+    # Genomic window
+    window_length <- 500
+    window_dataframe <- tss_dataframe %>% mutate(start=start-window_length/2, end=end+window_length/2)# %>% select(chr, start, end, transcript_id, score, strand)
+
+    # Write
+    fwrite(window_dataframe, file=gsub('.bed', glue('_{window_length}bp.bed'), outfile), sep='\t', col.names=FALSE)
+
+}
+
+#############################################
+########## 3. Get counts
+#############################################
+
+get_tss_counts <- function(infile, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(DiffBind))
+    
+    # Read data
+    atac <- dba(sampleSheet=infile)
+
+    # Count
+    atac <- dba.count(atac, summits=FALSE, bUseSummarizeOverlaps=FALSE)
+
+    # Save
+    save(atac, file=outfile)
+
+}
+
 #############################################
 #############################################
 ########## 1. Isoform heatmap
@@ -59,37 +170,6 @@ split_gtf <- function(infiles, outfile) {
         rtracklayer::export(gtf_split[[transcript_class]], gtf_outfile, format='gtf') # %>% head(5000)
         
     }
-
-}
-
-#######################################################
-#######################################################
-########## S5. TSS coverage
-#######################################################
-#######################################################
-
-#############################################
-########## 1. Get TSS BED
-#############################################
-
-get_tss <- function(infile, outfile) {
-
-    # Read GTF
-    gtf <- rtracklayer::readGFF(infile)
-
-    # Extract TSSs
-    tss_dataframe <- gtf %>% filter(type=='exon') %>% group_by(transcript_id, strand) %>% summarize(chr=seqid, strand=strand, tss=ifelse(strand=='+', min(start), max(end))) %>% distinct %>% mutate(start=tss, end=tss+1, score=0) %>% select(chr, start, end, transcript_id, score, strand)
-
-    # Write
-    fwrite(tss_dataframe, file=outfile, sep='\t', col.names=FALSE)
-
-}
-
-#############################################
-########## 2. Get counts
-#############################################
-
-get_tss_coverage <- function(infiles, outfile, bed_file) {
 
 }
 
