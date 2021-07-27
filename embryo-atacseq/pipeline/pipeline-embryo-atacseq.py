@@ -262,11 +262,11 @@ def runBowtie(infiles, outfile):
 #############################################
 ########## 3. Filter
 #############################################
-# Removes duplicates, and any reads not mapping to chromosomes 1-19, X, Y.
+# Removes duplicates, and any reads not mapping to chromosomes 1-22, X, Y.
 # "[XS] == null" - multimappers
 # "not unmapped"
 # "not duplicate"
-# "ref_id <= 21 and ref_id != 19" - chromosomes 1-19,X,Y (no chrM)
+# "ref_id <= 25 and ref_id != 23" - chromosomes 1-22,X,Y (no chrM)
 # "mapping_quality >= 30"
 # fragment lengths is empty for single end data
 
@@ -280,7 +280,7 @@ def filterBam(infile, outfile):
 	outname = outfile.replace('.bam', '')
 
 	# Command
-	cmd_str = ''' sambamba view --with-header --nthreads 30 --format bam --filter "ref_id <= 21 and ref_id != 19 and not unmapped and not duplicate and mapping_quality >= 30" {infile} > {outfile} && \
+	cmd_str = ''' sambamba view --with-header --nthreads 30 --format bam --filter "ref_id <= 24 and ref_id != 22 and not unmapped and not duplicate and mapping_quality >= 30" {infile} > {outfile} && \
 		samtools index -b {outfile} && samtools flagstat {outfile} > {outname}.flagstat && samtools idxstats {outfile} > {outname}.idxstats && samtools stats {outfile} > {outname}.stats && samtools view {outfile} | awk '$9>0' | cut -f9 | sort | uniq -c | sort -b -k2,2n | sed -e 's/^[ \\t]*//' > {outname}.fragment_lengths.txt'''.format(**locals())
 
 	# Run
@@ -378,7 +378,7 @@ def runGenrichCombined(infiles, outfile):
 		# -r
 
 	# Run
-	run_job(cmd_str, outfile, modules=['genrich/0.6'], W='03:00', n=1, GB=30, print_cmd=True, stdout=outfile.replace('.narrowPeak', '.log'), stderr=outfile.replace('.narrowPeak', '.err'))
+	run_job(cmd_str, outfile, modules=['genrich/0.6'], W='03:00', n=1, GB=30, print_cmd=False, stdout=outfile.replace('.narrowPeak', '.log'), stderr=outfile.replace('.narrowPeak', '.err'))
 
 #############################################
 ########## 3. Rename
@@ -960,7 +960,7 @@ def plotTssHeatmap(infiles, outfile):
 # @transform(computeTssMatrix,
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
-		   r'\1_profile_v2.png')
+		   r'\1_profile_v3.png')
 
 def plotTssProfile(infiles, outfile):
 
@@ -973,7 +973,7 @@ def plotTssProfile(infiles, outfile):
 	cmd_str = ''' plotProfile -m {infiles[0]} \
 					--refPointLabel TSS \
 					--plotHeight 6 \
-					--plotWidth 6 \
+					--plotWidth 5 \
 					--colors "#6BAED6" "#EE6A50" "#66C2A4" "#E9967A" \
 					-out {outfile}
 	'''.format(**locals())
@@ -1010,7 +1010,7 @@ def plotTssProfile(infiles, outfile):
 def splitJobs():
 	for organism, reference_info in reference_dict.items():
 		infiles = list(reference_info.values())
-		outfile = 'arion/atacseq/summary_plots.dir/phylo_heatmaps_all/{organism}/gtf/Known.gtf'.format(**locals())
+		outfile = 'arion/atacseq/summary_plots.dir/evolutionary_conservation/{organism}/gtf/Known.gtf'.format(**locals())
 		yield [infiles, outfile]
 
 @files(splitJobs)
@@ -1026,10 +1026,10 @@ def splitPhyloGTF(infiles, outfile):
 
 # @follows(createBigWig, splitGTF)
 
-@collate('arion/datasets/phylop/human/*.bw',
-		 regex(r'.*/phylop/(.*)/.*.bw'),
-		 add_inputs(r'arion/atacseq/summary_plots.dir/phylo_heatmaps_all/\1/gtf/*.gtf'),
-		 r'arion/atacseq/summary_plots.dir/phylo_heatmaps_all/\1/\1-matrix.gz')
+@collate('arion/datasets/evolutionary_conservation/human/*.bw',
+		 regex(r'.*/evolutionary_conservation/(.*)/(.*).bw'),
+		 add_inputs(r'arion/atacseq/summary_plots.dir/evolutionary_conservation/\1/gtf/*.gtf'),
+		 r'arion/atacseq/summary_plots.dir/evolutionary_conservation/\1/matrix/\1-\2-matrix.gz')
 
 def computePhyloMatrix(infiles, outfile):
 
@@ -1055,11 +1055,11 @@ def computePhyloMatrix(infiles, outfile):
 					--regionBodyLength 5000 \
 					--afterRegionStartLength 3000 \
 					--numberOfProcessors 48 \
-					--skipZeros -o {outfile}
+					-o {outfile}
 	'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, conda_env='env', W='03:00', n=6, GB=4, print_cmd=False, ow=False, wait=True)
+	run_job(cmd_str, outfile, conda_env='env', W='03:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
 
 #############################################
 ########## 1.3 Plot
@@ -1091,12 +1091,15 @@ def plotPhyloHeatmap(infile, outfile):
 
 def plotPhyloProfile(infile, outfile):
 
+	# Get algorithm
+	score = 'PhyloP' if 'phyloP' in outfile else 'PhastCons'
+
 	# Command
 	cmd_str = ''' plotProfile -m {infile} \
 		--numPlotsPerRow 4 \
 		--plotHeight 10 \
 		--plotWidth 13 \
-		--yAxisLabel "Conservation score (PhyloP)" \
+		--yAxisLabel "Conservation score ({score})" \
 		--samplesLabel "" \
 		--colors "#6BAED6" "#78C679" "#EE6A50" "#66C2A4" "#E9967A"\
 		-out {outfile}
