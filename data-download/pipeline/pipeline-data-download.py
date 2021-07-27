@@ -298,6 +298,69 @@ def downloadXia(infile, outfiles, outfileRoot):
 				outfile = uncompressed_file+'.gz'
 				run_job(cmd_str, outfile, W='03:00', GB=6, n=1)
 
+#############################################
+########## 3. Boroviak
+#############################################
+
+@subdivide('arion/datasets/boroviak/boroviak-samples.tsv',
+		   regex(r'(.*)/.*.tsv'),
+		   r'\1/rawdata/*.fastq.gz',
+		   r'\1/rawdata/{filename}*.fastq.gz')
+
+def downloadBoroviak(infile, outfiles, outfileRoot):
+	
+	# Read data
+	sample_dataframe = pd.read_table(infile)
+
+	# Get outdir
+	outdir = os.path.dirname(outfileRoot)
+
+	# Create directory
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Loop
+	for index, rowData in sample_dataframe.iterrows():
+		
+		# Get FASTQ URLs
+		fastq_urls = rowData['fastq_ftp'].split(';')
+		
+		# Loop
+		for fastq_url in fastq_urls:
+
+			# Check if exists
+			filename = os.path.basename(fastq_url).split('.')[0]
+			outfiles = glob.glob(outfileRoot.format(**locals()))
+
+			# Download
+			if len(outfiles) == 0:
+				os.system('cd {outdir} && wget {fastq_url}'.format(**locals()))
+
+# def boroviakJobs():
+# 	fastq_urls = [x for y in pd.read_table('arion/datasets/boroviak/boroviak-samples.tsv')['fastq_ftp'][:2] for x in y.split(';')]
+# 	for fastq_url in fastq_urls:
+# 		filename = os.path.basename(fastq_url)
+# 		outfile = 'arion/datasets/boroviak/rawdata/{filename}'.format(**locals())
+# 		yield [fastq_url, outfile]
+
+# @files(boroviakJobs)
+
+# def downloadBoroviak(fastq_url, outfile):
+	
+# 	# Get outdir
+# 	outdir = os.path.dirname(outfile)
+
+# 	# Create directory
+# 	if not os.path.exists(outdir):
+# 		os.makedirs(outdir)
+
+# 	# Download
+# 	if not os.path.exists(outfile):
+# 		print('Doing {}...'.format(outfile))
+# 		os.system('cd {outdir} && wget {fastq_url}'.format(**locals()))
+
+# python pipeline/pipeline-*.py -v 2 -T downloadBoroviak --forced_tasks downloadBoroviak --use_threads -j 6
+
 #######################################################
 #######################################################
 ########## S. Evolutionary conservation
@@ -309,17 +372,26 @@ def downloadXia(infile, outfiles, outfileRoot):
 #############################################
 
 def phylopJobs():
-	bw_files = ['http://hgdownload.cse.ucsc.edu/goldenpath/mm10/phyloP60way/mm10.60way.phyloP60way.bw', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/phyloP100way/hg38.phyloP100way.bw']
+	bw_files = [
+		'http://hgdownload.cse.ucsc.edu/goldenpath/mm10/phyloP60way/mm10.60way.phyloP60way.bw',
+		'http://hgdownload.cse.ucsc.edu/goldenpath/mm10/phyloP4way/mm10.phyloP4way.bw',
+		'http://hgdownload.cse.ucsc.edu/goldenpath/mm10/phastCons60way/mm10.60way.phastCons.bw',
+		'http://hgdownload.cse.ucsc.edu/goldenpath/mm10/phastCons4way/mm10.phastCons4way.bw',
+		'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/phyloP100way/hg38.phyloP100way.bw',
+		'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/phyloP17way/hg38.phyloP17way.bw',
+		'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/phastCons100way/hg38.phastCons100way.bw',
+		'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/phastCons17way/hg38.phastCons17way.bw',
+	]
 	for url_path in bw_files:
 		filename = os.path.basename(url_path)
 		genome = filename.split('.')[0]
 		organism = genome.replace('mm10', 'mouse').replace('hg38', 'human')
-		outfile = 'arion/datasets/phylop/{organism}/{filename}'.format(**locals())
+		outfile = 'arion/datasets/evolutionary_conservation/{organism}/{filename}'.format(**locals())
 		yield [url_path, outfile]
 
 @files(phylopJobs)
 
-def downloadPhyloP(url_path, outfile):
+def downloadConservationScores(url_path, outfile):
 
 	# Outdir
 	outdir = os.path.dirname(outfile)
@@ -334,7 +406,7 @@ def downloadPhyloP(url_path, outfile):
 #############################################
 
 def liftoverJobs():
-	chain_files = ['http://hgdownload.cse.ucsc.edu/goldenpath/mm10/liftOver/mm10ToHg38.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToMm10.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToRheMac10.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToSusScr11.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToDanRer11.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToGalGal6.over.chain.gz']
+	chain_files = ['http://hgdownload.cse.ucsc.edu/goldenpath/mm10/liftOver/mm10ToHg38.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToMm10.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToRheMac10.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToSusScr11.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToDanRer11.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToGalGal6.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToPanTro6.over.chain.gz', 'http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToCalJac4.over.chain.gz']
 	for url_path in chain_files:
 		filename = os.path.basename(url_path)
 		genome = filename.split('To')[0]
@@ -457,7 +529,23 @@ def downloadMacaqueGenome(infile, outfile):
 	os.system('cat {assembly_file_str} > {outfile}.gz && gunzip {outfile}.gz'.format(**locals()))
 
 #############################################
-########## 2. Create JSON
+########## 3. Download Marmoset
+#############################################
+
+@originate('arion/datasets/reference_genomes/marmoset/calJac4.fa')
+
+def downloadMarmosetGenome(outfile):
+
+	# Create directory
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+	
+	# Download
+	os.system('cd {outdir} && wget http://hgdownload.soe.ucsc.edu/goldenPath/calJac4/bigZips/calJac4.fa.gz && wget http://hgdownload.soe.ucsc.edu/goldenPath/calJac4/bigZips/genes/ncbiRefSeq.gtf.gz && gunzip *.gz'.format(**locals()))
+
+#############################################
+########## 3. Create JSON
 #############################################	
 
 @merge(downloadGenomes,
