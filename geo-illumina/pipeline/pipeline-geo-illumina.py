@@ -72,14 +72,31 @@ with open('/sc/arion/projects/GuccioneLab/genome-indices/genome-indices.json') a
 
 ##### 3. Variables #####
 linked_fastq = glob.glob('arion/geo_illumina/s01-datasets.dir/*/fastq/*/*.fastq.gz')
-human_linked_fastq = [x for x in linked_fastq if 'wang' not in x]
-macaque_linked_fastq = [x for x in linked_fastq if 'wang' in x]
+human_linked_fastq = [x for x in linked_fastq if 'wang' not in x and 'boroviak' not in x]
+primate_linked_fastq = {
+	'macaque': [x for x in linked_fastq if 'wang' in x],
+	'marmoset': [x for x in linked_fastq if 'boroviak' in x]
+}
 human_filtered_gtf = 'arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf'
 human_star_index = 'arion/illumina/s04-alignment.dir/human/all/STAR/index'
 human_rsem_index = 'arion/illumina/s04-alignment.dir/human/all/RSEM/index/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.idx.fa'
 human_junction_file = 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_junctions.tsv'
-macaque_gtf = 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.102.gtf'
-macaque_primary_assembly = 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.dna_sm.primary_assembly.fa'
+nonhuman_genomes = {
+	'macaque': {
+		'gtf': 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.102.gtf',
+		'gtf_lifted': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered.gtf',
+		'genome_fasta': 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.dna_sm.primary_assembly.fa'
+	},
+	'marmoset': {
+		'gtf': 'arion/datasets/reference_genomes/marmoset/ncbiRefSeq.gtf',
+		'gtf_lifted': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToCalJac4/Homo_sapiens.GRCh38.102_talon.cds-hg38ToCalJac_filtered.gtf',
+		'genome_fasta': 'arion/datasets/reference_genomes/marmoset/calJac4.fa'
+	}
+}
+# macaque_gtf = 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.102.gtf'
+# macaque_primary_assembly = 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.dna_sm.primary_assembly.fa'
+# marmoset_gtf = 'arion/datasets/reference_genomes/marmoset/ncbiRefSeq.gtf'
+# marmoset_primary_assembly = 'arion/datasets/reference_genomes/marmoset/calJac4.fa'
 
 #######################################################
 #######################################################
@@ -231,10 +248,40 @@ def fixWangSamples(infile, outfile):
 	sample_dataframe.to_csv(outfile, index=False)
 
 #############################################
-########## 5. Link
+########## 5. Boroviak
 #############################################
 
-@subdivide((fixYanSamples, fixXueSamples, fixLiuSamples, fixWangSamples),
+@transform('arion/datasets/boroviak/boroviak-samples.tsv',
+		   regex(r'.*/(.*)/(.*)s.tsv'),
+		   r'arion/geo_illumina/s01-datasets.dir/\1/\2_names.csv')
+
+def fixBoroviakSamples(infile, outfile):
+
+	# Outdir
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Columns to rename
+	column_dict = {'run_accession': 'Run', 'sample_title': 'sample_title'}
+
+	# Read
+	sample_dataframe = pd.read_table(infile, comment='#')
+
+	# Rename and select embryo samples
+	sample_dataframe = sample_dataframe.rename(columns=column_dict)[column_dict.values()]
+
+	# Add sample name
+	sample_dataframe['sample_name'] = ['marmoset_'+x.replace('Zygote', '1C').replace('cell', 'C') for x in sample_dataframe['sample_title']]
+
+	# Write
+	sample_dataframe.to_csv(outfile, index=False)
+
+#############################################
+########## 6. Link
+#############################################
+
+@subdivide((fixYanSamples, fixXueSamples, fixLiuSamples, fixWangSamples, fixBoroviakSamples), #fixBoroviakSamples
 		   regex(r'(.*)/.*-sample_names.csv'),
 		   r'\1/fastq/*/*.fastq.gz',
 		   r'\1/fastq/{sample_name}/{fastq_basename}')
@@ -617,57 +664,94 @@ def makeBamTables(infiles, outfile):
 
 #######################################################
 #######################################################
-########## S5. Macaque analysis
+########## S5. Primate analysis
 #######################################################
 #######################################################
 
 #############################################
-########## 1. STAR index
+########## 1. Copy lifted GTF
 #############################################
 
-@files((macaque_primary_assembly, macaque_gtf),
-	   'arion/geo_illumina/s05-macaque.dir/indices/STAR')
+def gtfJobs():
+	gtf_dict = {
+		'macaque': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered.gtf',
+		'marmoset': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToCalJac4/Homo_sapiens.GRCh38.102_talon.cds-hg38ToCalJac_filtered.gtf'
+	}
+	for organism, infile in gtf_dict.items():
+		outfile = 'arion/geo_illumina/s05-primates.dir/{organism}/gtf/{organism}-hg38_filtered_lifted.gtf'.format(**locals())
+		yield [infile, outfile]
 
-def buildMacaqueStarIndex(infiles, outfile):
+@files(gtfJobs)
 
-	# Command
-	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[0]} --sjdbGTFfile {infiles[1]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
+def copyLiftedGTF(infile, outfile):
 
 	# Run
-	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=True, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=False)
+	run_r_job('copy_lifted_gtf', infile, outfile, conda_env='env', W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 #############################################
-########## 2. RSEM index
+########## 2. STAR index
 #############################################
 
-@files((macaque_primary_assembly, macaque_gtf),
-	   'arion/geo_illumina/s05-macaque.dir/indices/RSEM/Macaca_mulatta.Mmul_10.102.idx.fa')
+@transform(copyLiftedGTF,
+		   regex(r'(.*)/(.*)/gtf/.*.gtf'),
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.fa'),
+		   r'\1/\2/STAR/index')
 
-def buildMacaqueRsemIndex(infiles, outfile):
+def buildStarIndex(infiles, outfile):
+
+	# Filter infiles
+	infiles = [x for x in infiles if 'cdna' not in x and 'renamed' not in x]
+
+	# Command
+	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[1]} --sjdbGTFfile {infiles[0]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-3:]), wait=False)
+
+#############################################
+########## 3. RSEM index
+#############################################
+
+@transform(copyLiftedGTF,
+		   regex(r'(.*)/(.*)/gtf/.*.gtf'),
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.fa'),
+		   r'\1/\2/RSEM/index/\2-hg38_filtered_lifted.idx.fa')
+
+def buildRsemIndex(infiles, outfile):
+
+	# Filter infiles
+	infiles = [x for x in infiles if 'cdna' not in x and 'renamed' not in x]
 
 	# Command
 	basename = outfile[:-len('.idx.fa')]
-	cmd_str = ''' rsem-prepare-reference --gtf {infiles[1]} --num-threads 10 {infiles[0]} {basename} '''.format(**locals())
+	cmd_str = ''' rsem-prepare-reference --gtf {infiles[0]} --num-threads 10 {infiles[1]} {basename} '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=True, stdout=basename+'.log', stderr=basename+'.err')
+	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=False, stdout=basename+'.log', stderr=basename+'.err')
 
 #############################################
-########## 3. STAR first pass
+########## 4. STAR first pass
 #############################################
 
-# @follows(linkFASTQ)
+def primateSjJobs():
+	for organism, fastq_files in primate_linked_fastq.items():
+		fastq_dataframe = pd.DataFrame({'fastq_path': fastq_files}).sort_values('fastq_path')
+		fastq_dataframe['sample_name'] = [x.split('/')[-2] for x in fastq_dataframe['fastq_path']]
+		fastq_dict = fastq_dataframe.groupby('sample_name')['fastq_path'].apply(lambda x: list(x)).to_dict()
+		for sample_name, fastq_pair in fastq_dict.items():
+			infiles = fastq_pair+['arion/geo_illumina/s05-primates.dir/{organism}/STAR/index'.format(**locals())]
+			outfile = 'arion/geo_illumina/s05-primates.dir/{organism}/STAR/pass1/{sample_name}/{sample_name}-SJ.out.tab'.format(**locals())
+			yield [infiles, outfile]
 
-@collate(macaque_linked_fastq,
-		 regex(r'(.*)/s01-datasets.dir/.*/fastq/(.*)/.*.fastq.gz'),
-		 add_inputs(buildMacaqueStarIndex),
-		 r'\1/s05-macaque.dir/alignment/STAR/pass1/\2/\2-SJ.out.tab')
+@follows(buildStarIndex)
 
-def getMacaqueStarJunctions(infiles, outfile):
+@files(primateSjJobs)
+
+def getPrimateStarJunctions(infiles, outfile):
 
 	# Split
-	fastq_files = [x[0] for x in infiles]
-	star_index = infiles[0][1]
+	fastq_files = infiles[:-1]
+	star_index = infiles[-1]
 
 	# FASTQ string
 	fastq_str = ' '.join(fastq_files)
@@ -687,24 +771,31 @@ def getMacaqueStarJunctions(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, W="02:00", print_outfile=False, GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
 
-# find arion/geo_illumina/s05-macaque.dir -name "*job.log" | jsc
-# find arion/geo_illumina/s05-macaque.dir -name "*final.out" | xargs grep -e 'Uniquely'
+# find arion/geo_illumina/s05-primates.dir/*/STAR/pass1/ -name "*job.log" | jsc
 
 #############################################
-########## 4. STAR second pass
+########## 5. STAR second pass
 #############################################
 
-@collate(macaque_linked_fastq,
-		 regex(r'(.*)/s01-datasets.dir/.*/fastq/(.*)/.*.fastq.gz'),
-		 add_inputs(buildMacaqueStarIndex, getMacaqueStarJunctions),
-		 r'\1/s05-macaque.dir/alignment/STAR/pass2/\2/\2-Aligned.sortedByCoord.out.bam')
+def primateStarJobs():
+	for organism, fastq_files in primate_linked_fastq.items():
+		fastq_dataframe = pd.DataFrame({'fastq_path': fastq_files}).sort_values('fastq_path')
+		fastq_dataframe['sample_name'] = [x.split('/')[-2] for x in fastq_dataframe['fastq_path']]
+		fastq_dict = fastq_dataframe.groupby('sample_name')['fastq_path'].apply(lambda x: list(x)).to_dict()
+		for sample_name, fastq_pair in fastq_dict.items():
+			star_index = 'arion/geo_illumina/s05-primates.dir/{organism}/STAR/index'.format(**locals())
+			sj_files = glob.glob('arion/geo_illumina/s05-primates.dir/{organism}/STAR/pass1/*/*-SJ.out.tab'.format(**locals()))
+			outfile = 'arion/geo_illumina/s05-primates.dir/{organism}/STAR/pass2/{sample_name}/{sample_name}-Aligned.sortedByCoord.out.bam'.format(**locals())
+			yield [[fastq_pair, star_index, sj_files], outfile]
 
-def runMacaqueStar(infiles, outfile):
+@follows(buildStarIndex)
 
-	# Split
-	fastq_files = [x[0] for x in infiles]
-	star_index = infiles[0][1]
-	sj_files = infiles[0][2:]
+@files(primateStarJobs)
+
+def runPrimateStar(infiles, outfile):
+
+	# Split infiles
+	fastq_files, star_index, sj_files = infiles
 
 	# Variables
 	prefix = outfile[:-len('Aligned.sortedByCoord.out.bam')]
@@ -726,31 +817,355 @@ def runMacaqueStar(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
 
-# find arion/geo_illumina/s05-macaque.dir/alignment/STAR/pass2 -name "*.log" | js
+# find arion/geo_illumina/s05-primates.dir/*/STAR/pass2 -name "*.log" | jsc
 
 #############################################
-########## 5. Create BigWig
+########## 6. RSEM expression
 #############################################
 
-@transform(runMacaqueStar,
-		   suffix('-Aligned.sortedByCoord.out.bam'),
-		   '.bw')
+# @follows(runPrimateStar)
 
-def createMacaqueBigWig(infile, outfile):
+@transform('arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
+		   regex(r'(.*)/STAR/.*/(.*)-Aligned.toTranscriptome.out.bam'),
+		   add_inputs(r'\1/RSEM/index/*_lifted.idx.fa'),
+		   r'\1/RSEM/results/\2/\2.isoforms.results')
+
+def runPrimateRsem(infiles, outfile):
+
+	# Variables
+	prefix = outfile[:-len('.isoforms.results')]
+	reference_name = infiles[1][:-len('.idx.fa')]
+
+	# Paired end
+	dataset = outfile.split('/')[-4]
+	paired_str = '' if 'macaque_1C_Rep3' in outfile else '--paired-end'
+	strandedness_str = 'none'
 
 	# Command
-	cmd_str = """bamCoverage --outFileFormat=bigwig --skipNonCoveredRegions --numberOfProcessors=50 --normalizeUsing RPKM -b {infile} -o {outfile}""".format(**locals())
+	cmd_str = '''rsem-calculate-expression \
+		--alignments \
+		--strandedness {strandedness_str} \
+		{paired_str} \
+		--estimate-rspd \
+		--num-threads 200 \
+		--no-bam-output \
+		{infiles[0]} \
+		{reference_name} \
+		{prefix} > {prefix}.rsem.log && \
+		rsem-plot-model {prefix} {prefix}.quant.pdf '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, conda_env='env', W='05:00', n=7, GB=6)
+	run_job(cmd_str, outfile, W="02:00", GB=2, n=25, modules=['rsem/1.3.3'], print_outfile=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
+
+# find arion/geo_illumina/s05-primates.dir/*/RSEM/results -name "*.log" | grep -v 'rsem.log'
+
+# @follows(linkFASTQ)
+
+# @collate(macaque_linked_fastq,
+# 		 regex(r'(.*)/s01-datasets.dir/.*/fastq/(.*)/.*.fastq.gz'),
+# 		 add_inputs(buildMacaqueStarIndex),
+# 		 r'\1/s05-macaque.dir/alignment/STAR/pass1/\2/\2-SJ.out.tab')
+
+# def getMacaqueStarJunctions(infiles, outfile):
+
+# 	# Split
+# 	fastq_files = [x[0] for x in infiles]
+# 	star_index = infiles[0][1]
+
+# 	# FASTQ string
+# 	fastq_str = ' '.join(fastq_files)
+
+# 	# Prefix
+# 	prefix = outfile[:-len('SJ.out.tab')]
+
+# 	# Command
+# 	cmd_str = ''' STAR \
+# 		--genomeDir {star_index} \
+# 		--readFilesIn {fastq_str} \
+# 		--readFilesCommand zcat \
+# 		--outFileNamePrefix {prefix} \
+# 		--runThreadN 100 \
+# 		--outSAMtype None'''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, W="02:00", print_outfile=False, GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
+
+# # find arion/geo_illumina/s05-macaque.dir -name "*job.log" | jsc
+# # find arion/geo_illumina/s05-macaque.dir -name "*final.out" | xargs grep -e 'Uniquely'
+
+# #######################################################
+# #######################################################
+# ########## S5. Macaque analysis
+# #######################################################
+# #######################################################
+
+# #############################################
+# ########## 1. STAR index
+# #############################################
+
+# @files((macaque_primary_assembly, macaque_gtf),
+# 	   'arion/geo_illumina/s05-macaque.dir/indices/STAR')
+
+# def buildMacaqueStarIndex(infiles, outfile):
+
+# 	# Command
+# 	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[0]} --sjdbGTFfile {infiles[1]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=True, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=False)
+
+# #############################################
+# ########## 2. RSEM index
+# #############################################
+
+# @files((macaque_primary_assembly, macaque_gtf),
+# 	   'arion/geo_illumina/s05-macaque.dir/indices/RSEM/Macaca_mulatta.Mmul_10.102.idx.fa')
+
+# def buildMacaqueRsemIndex(infiles, outfile):
+
+# 	# Command
+# 	basename = outfile[:-len('.idx.fa')]
+# 	cmd_str = ''' rsem-prepare-reference --gtf {infiles[1]} --num-threads 10 {infiles[0]} {basename} '''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=True, stdout=basename+'.log', stderr=basename+'.err')
+
+# #############################################
+# ########## 3. STAR first pass
+# #############################################
+
+# # @follows(linkFASTQ)
+
+# @collate(macaque_linked_fastq,
+# 		 regex(r'(.*)/s01-datasets.dir/.*/fastq/(.*)/.*.fastq.gz'),
+# 		 add_inputs(buildMacaqueStarIndex),
+# 		 r'\1/s05-macaque.dir/alignment/STAR/pass1/\2/\2-SJ.out.tab')
+
+# def getMacaqueStarJunctions(infiles, outfile):
+
+# 	# Split
+# 	fastq_files = [x[0] for x in infiles]
+# 	star_index = infiles[0][1]
+
+# 	# FASTQ string
+# 	fastq_str = ' '.join(fastq_files)
+
+# 	# Prefix
+# 	prefix = outfile[:-len('SJ.out.tab')]
+
+# 	# Command
+# 	cmd_str = ''' STAR \
+# 		--genomeDir {star_index} \
+# 		--readFilesIn {fastq_str} \
+# 		--readFilesCommand zcat \
+# 		--outFileNamePrefix {prefix} \
+# 		--runThreadN 100 \
+# 		--outSAMtype None'''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, W="02:00", print_outfile=False, GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
+
+# # find arion/geo_illumina/s05-macaque.dir -name "*job.log" | jsc
+# # find arion/geo_illumina/s05-macaque.dir -name "*final.out" | xargs grep -e 'Uniquely'
+
+# #############################################
+# ########## 4. STAR second pass
+# #############################################
+
+# @collate(macaque_linked_fastq,
+# 		 regex(r'(.*)/s01-datasets.dir/.*/fastq/(.*)/.*.fastq.gz'),
+# 		 add_inputs(buildMacaqueStarIndex, getMacaqueStarJunctions),
+# 		 r'\1/s05-macaque.dir/alignment/STAR/pass2/\2/\2-Aligned.sortedByCoord.out.bam')
+
+# def runMacaqueStar(infiles, outfile):
+
+# 	# Split
+# 	fastq_files = [x[0] for x in infiles]
+# 	star_index = infiles[0][1]
+# 	sj_files = infiles[0][2:]
+
+# 	# Variables
+# 	prefix = outfile[:-len('Aligned.sortedByCoord.out.bam')]
+# 	fastq_str = ' '.join(fastq_files)
+# 	sj_files_str = ' '.join(sj_files)
+
+# 	# Command
+# 	cmd_str = ''' STAR \
+# 		--genomeDir {star_index} \
+# 		--readFilesIn {fastq_str} \
+# 		--readFilesCommand zcat \
+# 		--outFileNamePrefix {prefix} \
+# 		--runThreadN 32 \
+# 		--sjdbFileChrStartEnd {sj_files_str} \
+# 		--limitSjdbInsertNsj 5000000 \
+# 		--quantMode TranscriptomeSAM GeneCounts \
+# 		--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
+
+# # find arion/geo_illumina/s05-macaque.dir/alignment/STAR/pass2 -name "*.log" | js
+
+# #############################################
+# ########## 5. Create BigWig
+# #############################################
+
+# @transform(runMacaqueStar,
+# 		   suffix('-Aligned.sortedByCoord.out.bam'),
+# 		   '.bw')
+
+# def createMacaqueBigWig(infile, outfile):
+
+# 	# Command
+# 	cmd_str = """bamCoverage --outFileFormat=bigwig --skipNonCoveredRegions --numberOfProcessors=50 --normalizeUsing RPKM -b {infile} -o {outfile}""".format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, conda_env='env', W='05:00', n=7, GB=6)
+
+# #############################################
+# ########## 5. RSEM
+# #############################################
+
+# #############################################
+# ########## 6. Merge
+# #############################################
+
+# #######################################################
+# #######################################################
+# ########## S6. Marmoset analysis
+# #######################################################
+# #######################################################
+
+# #############################################
+# ########## 1. STAR index
+# #############################################
+
+# @files((marmoset_primary_assembly, marmoset_gtf),
+# 	   'arion/geo_illumina/s06-marmoset.dir/indices/STAR')
+
+# def buildMarmosetStarIndex(infiles, outfile):
+
+# 	# Command
+# 	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[0]} --sjdbGTFfile {infiles[1]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=False)
 
 #############################################
-########## 5. RSEM
+########## 2. RSEM index
 #############################################
 
-#############################################
-########## 6. Merge
-#############################################
+# @files((marmoset_primary_assembly, marmoset_gtf),
+# 	   'arion/geo_illumina/s06-marmoset.dir/indices/RSEM/Macaca_mulatta.Mmul_10.102.idx.fa')
+
+# def buildMarmosetRsemIndex(infiles, outfile):
+
+# 	# Command
+# 	basename = outfile[:-len('.idx.fa')]
+# 	cmd_str = ''' rsem-prepare-reference --gtf {infiles[1]} --num-threads 10 {infiles[0]} {basename} '''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=True, stdout=basename+'.log', stderr=basename+'.err')
+
+# #############################################
+# ########## 3. STAR first pass
+# #############################################
+
+# # @follows(linkFASTQ)
+
+# @collate(macaque_linked_fastq,
+# 		 regex(r'(.*)/s01-datasets.dir/.*/fastq/(.*)/.*.fastq.gz'),
+# 		 add_inputs(buildMacaqueStarIndex),
+# 		 r'\1/s05-macaque.dir/alignment/STAR/pass1/\2/\2-SJ.out.tab')
+
+# def getMacaqueStarJunctions(infiles, outfile):
+
+# 	# Split
+# 	fastq_files = [x[0] for x in infiles]
+# 	star_index = infiles[0][1]
+
+# 	# FASTQ string
+# 	fastq_str = ' '.join(fastq_files)
+
+# 	# Prefix
+# 	prefix = outfile[:-len('SJ.out.tab')]
+
+# 	# Command
+# 	cmd_str = ''' STAR \
+# 		--genomeDir {star_index} \
+# 		--readFilesIn {fastq_str} \
+# 		--readFilesCommand zcat \
+# 		--outFileNamePrefix {prefix} \
+# 		--runThreadN 100 \
+# 		--outSAMtype None'''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, W="02:00", print_outfile=False, GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
+
+# # find arion/geo_illumina/s05-macaque.dir -name "*job.log" | jsc
+# # find arion/geo_illumina/s05-macaque.dir -name "*final.out" | xargs grep -e 'Uniquely'
+
+# #############################################
+# ########## 4. STAR second pass
+# #############################################
+
+# @collate(macaque_linked_fastq,
+# 		 regex(r'(.*)/s01-datasets.dir/.*/fastq/(.*)/.*.fastq.gz'),
+# 		 add_inputs(buildMacaqueStarIndex, getMacaqueStarJunctions),
+# 		 r'\1/s05-macaque.dir/alignment/STAR/pass2/\2/\2-Aligned.sortedByCoord.out.bam')
+
+# def runMacaqueStar(infiles, outfile):
+
+# 	# Split
+# 	fastq_files = [x[0] for x in infiles]
+# 	star_index = infiles[0][1]
+# 	sj_files = infiles[0][2:]
+
+# 	# Variables
+# 	prefix = outfile[:-len('Aligned.sortedByCoord.out.bam')]
+# 	fastq_str = ' '.join(fastq_files)
+# 	sj_files_str = ' '.join(sj_files)
+
+# 	# Command
+# 	cmd_str = ''' STAR \
+# 		--genomeDir {star_index} \
+# 		--readFilesIn {fastq_str} \
+# 		--readFilesCommand zcat \
+# 		--outFileNamePrefix {prefix} \
+# 		--runThreadN 32 \
+# 		--sjdbFileChrStartEnd {sj_files_str} \
+# 		--limitSjdbInsertNsj 5000000 \
+# 		--quantMode TranscriptomeSAM GeneCounts \
+# 		--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
+
+# # find arion/geo_illumina/s05-macaque.dir/alignment/STAR/pass2 -name "*.log" | js
+
+# #############################################
+# ########## 5. Create BigWig
+# #############################################
+
+# @transform(runMacaqueStar,
+# 		   suffix('-Aligned.sortedByCoord.out.bam'),
+# 		   '.bw')
+
+# def createMacaqueBigWig(infile, outfile):
+
+# 	# Command
+# 	cmd_str = """bamCoverage --outFileFormat=bigwig --skipNonCoveredRegions --numberOfProcessors=50 --normalizeUsing RPKM -b {infile} -o {outfile}""".format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, conda_env='env', W='05:00', n=7, GB=6)
+
+# #############################################
+# ########## 5. RSEM
+# #############################################
+
+# #############################################
+# ########## 6. Merge
+# #############################################
 
 #######################################################
 #######################################################
