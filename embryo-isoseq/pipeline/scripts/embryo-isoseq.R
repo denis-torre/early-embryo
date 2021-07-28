@@ -594,20 +594,14 @@ gtf_to_bed <- function(infile, outfile, feature_type) {
 get_shuffled_exons <- function(infiles, outfile) {
     
     # Read shuffled bed
-    shuffled_transcript_bed <- fread(infiles[1], col.names = c('chr', 'start_shuffled', 'end_shuffled', 'transcript_id', 'score', 'strand'))
-
-    # Read transcript bed
-    transcript_bed <- fread(infiles[2], col.names = c('chr', 'start', 'end', 'transcript_id', 'score', 'strand'))
+    shuffled_transcript_bed <- fread(infiles[1], col.names = c('chr', 'transcript_start_shuffled', 'transcript_end_shuffled', 'transcript_id', 'score', 'strand'))
 
     # Read exon bed
-    exon_bed <- fread(infiles[3], col.names = c('chr', 'start', 'end', 'transcript_exon_id', 'score', 'strand')) %>% mutate(transcript_id=gsub('(.*)_.*', '\\1', transcript_exon_id))
+    exon_bed <- fread(infiles[2], col.names = c('chr', 'start', 'end', 'transcript_exon_id', 'score', 'strand')) %>% mutate(transcript_id=gsub('(.*)_.*', '\\1', transcript_exon_id)) %>% group_by(transcript_id) %>% mutate(start_shift=start-min(start), end_shift=end-min(start))
 
-    # Get shifts
-    shift_dataframe <- transcript_bed %>% select(transcript_id, start) %>% left_join(shuffled_transcript_bed %>% select(transcript_id, start_shuffled), by='transcript_id') %>% mutate(shift=start_shuffled-start) %>% select(transcript_id, shift)
-
-    # Shift exons
+    # Merge
     shuffle_nr <- gsub('.*shuffled(.*).bed', '\\1', infiles[1])
-    shuffled_exon_bed <- exon_bed %>% left_join(shift_dataframe, by='transcript_id') %>% mutate(start=format(start+shift, scientific=FALSE, trim=TRUE), end=format(end+shift, scientific=FALSE, trim=TRUE), transcript_exon_id=paste0(transcript_exon_id, '_shuffle', shuffle_nr)) %>% select(-transcript_id, -shift)
+    shuffled_exon_bed <- shuffled_transcript_bed %>% left_join(exon_bed %>% select(-chr, -score, -strand), by='transcript_id') %>% mutate(exon_start_shuffled=transcript_start_shuffled+start_shift, exon_end_shuffled=transcript_start_shuffled+end_shift, transcript_exon_id=paste0(transcript_exon_id, '-shuffle', shuffle_nr)) %>% select(chr, exon_start_shuffled, exon_end_shuffled, transcript_exon_id, score, strand)
 
     # Write
     fwrite(shuffled_exon_bed, file=outfile, sep='\t', col.names=FALSE)

@@ -1159,42 +1159,64 @@ def getChromosomeSizes(infile, outfile):
 	run_job(cmd_str, outfile, modules=['python/3.8.2'], W='00:05', GB=10, n=11, print_outfile=False)
 
 #############################################
-########## 3. Shuffle transcripts
+########## 3. Get known transcript BED
 #############################################
 
-@follows(gtfToBed, getChromosomeSizes)
+@transform('arion/datasets/reference_genomes/*/*.gtf',
+		   suffix('.gtf'),
+		   '_transcript.bed')
+
+def getKnownTranscriptBed(infile, outfile):
+
+	# Run
+	run_r_job('gtf_to_bed', infile, outfile, additional_params='transcript', conda_env='env', W='00:05', GB=10, n=1)#, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
+
+#############################################
+########## 4. Shuffle transcripts
+#############################################
+
+# @follows(gtfToBed, getChromosomeSizes, getKnownTranscriptBed)
 
 @subdivide('arion/isoseq/s09-evolutionary_conservation.dir/*/bed/transcript/*.bed',
 		   regex(r'(.*)/(.*)/bed/transcript/(.*).bed'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*.chromsizes', r'arion/datasets/reference_genomes/\2/*.gtf'),
-		   r'\1/\2/bed_shuffled/transcript/\3-shuffled*.bed',
-		   r'\1/\2/bed_shuffled/transcript/\3-shuffled{shift_nr}.bed')
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.chromsizes', r'arion/datasets/reference_genomes/\2/*_transcript.bed'),
+		   r'\1/\2/bed_shuffled/*/transcript/\3-shuffled*.bed',
+		   r'\1/\2/bed_shuffled/{shuffle_type}/transcript/\3-shuffled{shift_nr}-{shuffle_type}.bed')
 
 def shuffleTranscripts(infiles, outfiles, outfileRoot):
 
+	# Shuffle parameters
+	shuffle_types = {
+		'intergenic': '-excl {infiles[2]}'.format(**locals()),
+		'intergenic_chrom': '-chrom -excl {infiles[2]}'.format(**locals())
+	}
+
 	# Loop
-	for i in range(5):
+	for shuffle_type, shuffle_parameters in shuffle_types.items():
 
-		# Get shift number
-		shift_nr = i+1
+		# Loop
+		for i in range(1):
 
-		# Get outfile
-		outfile = outfileRoot.format(**locals())
+			# Get shift number
+			shift_nr = i+1
 
-		# Command
-		cmd_str = ''' bedtools shuffle -i {infiles[0]} -g {infiles[1]} > {outfile} '''.format(**locals()) # -chrom
-		
-		# Run
-		run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:05', GB=5, n=1, print_cmd=False)
+			# Get outfile
+			outfile = outfileRoot.format(**locals())
+
+			# Command
+			cmd_str = ''' bedtools shuffle {shuffle_parameters} -i {infiles[0]} -g {infiles[1]} > {outfile} '''.format(**locals()) # -chrom
+			
+			# Run
+			run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:05', GB=5, n=1, print_cmd=False)
 
 #############################################
-########## 4. Get shuffled exons
+########## 5. Get shuffled exons
 #############################################
 
 @transform(shuffleTranscripts,
-		   regex(r'(.*)/bed_shuffled/transcript/(.*)-transcript-(shuffled.*).bed'),
-		   add_inputs(r'\1/bed/transcript/\2-transcript.bed', r'\1/bed/exon/\2-exon.bed'),
-		   r'\1/bed_shuffled/exon/\2-\3-exon.bed')
+		   regex(r'(.*)/bed_shuffled/(.*)/transcript/(.*)-transcript-(shuffled.*).bed'),
+		   add_inputs(r'\1/bed/exon/\3-exon.bed'),
+		   r'\1/bed_shuffled/\2/exon/\3-exon-\4.bed')
 
 def getShuffledExons(infiles, outfile):
 
@@ -1202,16 +1224,20 @@ def getShuffledExons(infiles, outfile):
 	run_r_job('get_shuffled_exons', infiles, outfile, conda_env='env', W='00:05', GB=10, n=1)#, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
 
 #############################################
-########## 5. Get scores
+########## 6. Get scores
 #############################################
 
 # @follows(gtfToBed, getShuffledExons)
+# for score_file in glob.glob('arion/datasets/evolutionary_conservation/{organism}/*.bw'.format(**locals()))[:1]:
+# ['arion/datasets/evolutionary_conservation/human/hg38.phastCons100way.bw']:
 
 def scoreJobs():
 	for organism in ['human']: #mouse
+		transcript_bed = glob.glob('arion/isoseq/s09-evolutionary_conservation.dir/{organism}/bed/exon/*.bed'.format(**locals()))
+		shuffled_bed = glob.glob('arion/isoseq/s09-evolutionary_conservation.dir/{organism}/bed_shuffled/*/exon/*.bed'.format(**locals()))
 		for score_file in glob.glob('arion/datasets/evolutionary_conservation/{organism}/*.bw'.format(**locals())):
 			score_name = os.path.basename(score_file)[:-len('.bw')]
-			for bed_file in glob.glob('arion/isoseq/s09-evolutionary_conservation.dir/{organism}/bed*/exon/*.bed'.format(**locals())):
+			for bed_file in transcript_bed+shuffled_bed:#: #
 				bed_name = os.path.basename(bed_file)[:-len('.bed')]
 				outfile = 'arion/isoseq/s09-evolutionary_conservation.dir/{organism}/scores/split/{score_name}/{bed_name}-{score_name}.tsv'.format(**locals())
 				yield [[score_file, bed_file], outfile]
@@ -1227,7 +1253,7 @@ def getConservationScores(infiles, outfile):
 	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:05', GB=1, n=15, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
 #############################################
-########## 5. Merge
+########## 7. Merge
 #############################################
 
 @collate(getConservationScores,
