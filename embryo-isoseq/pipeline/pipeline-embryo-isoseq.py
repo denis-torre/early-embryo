@@ -12,6 +12,7 @@
 #############################################
 ##### 1. Python modules #####
 from ruffus import *
+from ruffus.combinatorics import *
 import ruffus.cmdline as cmdline
 import sys
 import os
@@ -1113,65 +1114,130 @@ def mergeRepeatMasker(infiles, outfile):
 
 #######################################################
 #######################################################
-########## S9. PhyloP
+########## S9. Evolutionary conservation
 #######################################################
 #######################################################
 
 #############################################
-########## 1. Convert GTF
+########## 1. Get BED
 #############################################
 
 # @follows(splitGTF)
 
-# @transform('arion/isoseq/s06-cpat.dir/human/gtf/split/*talon_01.gtf',
-@transform('arion/isoseq/s06-cpat.dir/*/gtf/split/*talon_??.gtf',
+@subdivide('arion/isoseq/s06-cpat.dir/human/gtf/split/*talon_??.gtf',
 		   regex(r'(.*)/s06-cpat.dir/(.*)/gtf/split/(.*).gtf'),
-		   r'\1/s09-phylop.dir/\2/bed/\3.bed')
+		   r'\1/s09-evolutionary_conservation.dir/\2/bed/*/*.bed',
+		   r'\1/s09-evolutionary_conservation.dir/\2/bed/{feature_type}/\3-{feature_type}.bed')
 
-def gtfToBed(infile, outfile):
+def gtfToBed(infile, outfiles, outfileRoot):
 
-	# Run
-	run_r_job('gtf_to_bed', infile, outfile, conda_env='env', W='00:05', GB=10, n=1, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
+	# Loop
+	for feature_type in ['exon', 'transcript']:
 
-# find arion/isoseq/s09-phylop.dir/*/bed -name "*.log" | jsc
+		# Get outfile
+		outfile = outfileRoot.format(**locals())
+
+		# Run
+		run_r_job('gtf_to_bed', infile, outfile, additional_params=feature_type, conda_env='env', W='00:05', GB=10, n=1)#, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
+
+# find arion/isoseq/s09-evolutionary_conservation.dir/*/bed/transcripts -name "*.log" | jsc
 
 #############################################
-########## 2. Convert GTF
+########## 2. Get chromosome sizes
 #############################################
 
-# @follows(getTalonGTF)
+@transform(renameFastaChromosomes,
+		   suffix('.fa'),
+		   '.chromsizes')
 
-@transform(gtfToBed,
-		   regex(r'(.*)/(.*)/(.*)/bed/(.*).bed'),
-		   add_inputs(r'arion/datasets/phylop/\3/*.bw'),
-		   r'\1/\2/\3/split/\4_phyloP.tsv')
-
-def getPhyloScores(infiles, outfile):
+def getChromosomeSizes(infile, outfile):
 
 	# Command
-	cmd_str = ''' bigWigAverageOverBed {infiles[1]} {infiles[0]} {outfile} '''.format(**locals())
+	cmd_str = ''' faidx {infile} -i chromsizes > {outfile} '''.format(**locals())
 	
 	# Run
-	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:15', GB=1, n=15, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
-
-# find arion/isoseq/s09-phylop.dir/*/split -name "*.log" | jsc
-# find arion/isoseq/s09-phylop.dir/*/split -name "*.err" | lr
+	run_job(cmd_str, outfile, modules=['python/3.8.2'], W='00:05', GB=10, n=11, print_outfile=False)
 
 #############################################
-########## 3. Merge
+########## 3. Shuffle transcripts
 #############################################
 
-@collate(getPhyloScores,
-# @collate('arion/isoseq/s09-phylop.dir/*/split/*_phyloP.tsv',
-		 regex(r'(.*)/(.*)/split/.*.tsv'),
-		 r'\1/\2/\2-phyloP.tsv')
+@follows(gtfToBed, getChromosomeSizes)
 
-def mergePhyloScores(infiles, outfile):
+@subdivide('arion/isoseq/s09-evolutionary_conservation.dir/*/bed/transcript/*.bed',
+		   regex(r'(.*)/(.*)/bed/transcript/(.*).bed'),
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.chromsizes', r'arion/datasets/reference_genomes/\2/*.gtf'),
+		   r'\1/\2/bed_shuffled/transcript/\3-shuffled*.bed',
+		   r'\1/\2/bed_shuffled/transcript/\3-shuffled{shift_nr}.bed')
+
+def shuffleTranscripts(infiles, outfiles, outfileRoot):
+
+	# Loop
+	for i in range(5):
+
+		# Get shift number
+		shift_nr = i+1
+
+		# Get outfile
+		outfile = outfileRoot.format(**locals())
+
+		# Command
+		cmd_str = ''' bedtools shuffle -i {infiles[0]} -g {infiles[1]} > {outfile} '''.format(**locals()) # -chrom
+		
+		# Run
+		run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:05', GB=5, n=1, print_cmd=False)
+
+#############################################
+########## 4. Get shuffled exons
+#############################################
+
+@transform(shuffleTranscripts,
+		   regex(r'(.*)/bed_shuffled/transcript/(.*)-transcript-(shuffled.*).bed'),
+		   add_inputs(r'\1/bed/transcript/\2-transcript.bed', r'\1/bed/exon/\2-exon.bed'),
+		   r'\1/bed_shuffled/exon/\2-\3-exon.bed')
+
+def getShuffledExons(infiles, outfile):
 
 	# Run
-	run_r_job('merge_phylo_scores', infiles, outfile, conda_env='env', W='00:05', GB=10, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+	run_r_job('get_shuffled_exons', infiles, outfile, conda_env='env', W='00:05', GB=10, n=1)#, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
 
-# bigWigAverageOverBed arion/datasets/phylop/human/hg38.phyloP100way.bw test.bed test.tsv
+#############################################
+########## 5. Get scores
+#############################################
+
+# @follows(gtfToBed, getShuffledExons)
+
+def scoreJobs():
+	for organism in ['human']: #mouse
+		for score_file in glob.glob('arion/datasets/evolutionary_conservation/{organism}/*.bw'.format(**locals())):
+			score_name = os.path.basename(score_file)[:-len('.bw')]
+			for bed_file in glob.glob('arion/isoseq/s09-evolutionary_conservation.dir/{organism}/bed*/exon/*.bed'.format(**locals())):
+				bed_name = os.path.basename(bed_file)[:-len('.bed')]
+				outfile = 'arion/isoseq/s09-evolutionary_conservation.dir/{organism}/scores/split/{score_name}/{bed_name}-{score_name}.tsv'.format(**locals())
+				yield [[score_file, bed_file], outfile]
+
+@files(scoreJobs)
+
+def getConservationScores(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bigWigAverageOverBed {infiles[0]} {infiles[1]} {outfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:05', GB=1, n=15, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+#############################################
+########## 5. Merge
+#############################################
+
+@collate(getConservationScores,
+		 regex(r'(.*)/scores/split/(.*)/.*talon_..(.*)-.*'),
+		 r'\1/scores/average/\2/\2\3-average_scores.tsv')
+
+def mergeConservationScores(infiles, outfile):
+
+	# Run
+	run_r_job('merge_conservation_scores', infiles, outfile, conda_env='env', W='00:10', GB=10, n=1, ow=True)#, run_locally=False, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
 
 #######################################################
 #######################################################

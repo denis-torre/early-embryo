@@ -562,7 +562,7 @@ merge_repeatmasker <- function(infiles, outfile) {
 
 #######################################################
 #######################################################
-########## S9. PhyloP
+########## S9. Evolutionary conservation
 #######################################################
 #######################################################
 
@@ -570,13 +570,17 @@ merge_repeatmasker <- function(infiles, outfile) {
 ########## 1. Convert GTF
 #############################################
 
-gtf_to_bed <- function(infile, outfile) {
+gtf_to_bed <- function(infile, outfile, feature_type) {
     
     # Read
     gtf <- rtracklayer::readGFF(infile)
 
-    # Subset
-    bed_dataframe <- gtf %>% filter(type=='exon') %>% mutate(seqid=paste0('chr', seqid), start=format(start-1, scientific=FALSE), end=format(end, scientific=FALSE), score=0, transcript_exon_id=paste0(transcript_id, '_exon', exon_number)) %>% select(seqid, start, end, transcript_exon_id, score, strand)
+    # Exon
+    if (feature_type == 'exon') {
+        bed_dataframe <- gtf %>% filter(type=='exon') %>% mutate(seqid=paste0('chr', seqid), start=format(start-1, scientific=FALSE, trim=TRUE), end=format(end, scientific=FALSE, trim=TRUE), score=0, transcript_exon_id=paste0(transcript_id, '_exon', exon_number)) %>% select(seqid, start, end, transcript_exon_id, score, strand)
+    } else if (feature_type == 'transcript') {
+        bed_dataframe <- gtf %>% filter(type=='transcript') %>% mutate(seqid=paste0('chr', seqid), start=format(start-1, scientific=FALSE, trim=TRUE), end=format(end, scientific=FALSE, trim=TRUE), score=0) %>% select(seqid, start, end, transcript_id, score, strand)
+    }
 
     # Write
     fwrite(bed_dataframe, file=outfile, sep='\t', col.names=FALSE)
@@ -584,20 +588,45 @@ gtf_to_bed <- function(infile, outfile) {
 }
 
 #############################################
-########## 2. Convert GTF
+########## 2. Get random background
 #############################################
 
-merge_phylo_scores <- function(infiles, outfile) {
+get_shuffled_exons <- function(infiles, outfile) {
     
-    # Read results
-    phylop_dataframe <- lapply(infiles, fread) %>% bind_rows
-    colnames(phylop_dataframe) <- c('transcript_exon_id', 'size', 'covered', 'sum', 'mean0', 'mean')
+    # Read shuffled bed
+    shuffled_transcript_bed <- fread(infiles[1], col.names = c('chr', 'start_shuffled', 'end_shuffled', 'transcript_id', 'score', 'strand'))
 
-    # Get transcript summary
-    summary_dataframe <- phylop_dataframe %>% mutate(transcript_id=gsub('(.*)_.*', '\\1', transcript_exon_id)) %>% group_by(transcript_id) %>% summarize(size=sum(size), covered=sum(covered), score_sum=sum(sum), score_mean0=mean(mean0), score_mean=mean(mean))
+    # Read transcript bed
+    transcript_bed <- fread(infiles[2], col.names = c('chr', 'start', 'end', 'transcript_id', 'score', 'strand'))
+
+    # Read exon bed
+    exon_bed <- fread(infiles[3], col.names = c('chr', 'start', 'end', 'transcript_exon_id', 'score', 'strand')) %>% mutate(transcript_id=gsub('(.*)_.*', '\\1', transcript_exon_id))
+
+    # Get shifts
+    shift_dataframe <- transcript_bed %>% select(transcript_id, start) %>% left_join(shuffled_transcript_bed %>% select(transcript_id, start_shuffled), by='transcript_id') %>% mutate(shift=start_shuffled-start) %>% select(transcript_id, shift)
+
+    # Shift exons
+    shuffle_nr <- gsub('.*shuffled(.*).bed', '\\1', infiles[1])
+    shuffled_exon_bed <- exon_bed %>% left_join(shift_dataframe, by='transcript_id') %>% mutate(start=format(start+shift, scientific=FALSE, trim=TRUE), end=format(end+shift, scientific=FALSE, trim=TRUE), transcript_exon_id=paste0(transcript_exon_id, '_shuffle', shuffle_nr)) %>% select(-transcript_id, -shift)
 
     # Write
-    fwrite(summary_dataframe, file=outfile, sep='\t')
+    fwrite(shuffled_exon_bed, file=outfile, sep='\t', col.names=FALSE)
+
+}
+
+#############################################
+########## 5. Merge
+#############################################
+
+merge_conservation_scores <- function(infiles, outfile) {
+    
+    # Read results
+    result_dataframe <- lapply(infiles, function(x) 
+        fread(x) %>% mutate(transcript_id=gsub('(.*?)_.*', '\\1', V1)) %>% group_by(transcript_id) %>% summarize(mean_score=mean(V6)) %>% mutate(method=gsub('.*hg38.(.*way).*', '\\1', x), shuffled=grepl('shuffled', x))
+    ) %>% bind_rows
+
+    # Write
+    fwrite(result_dataframe, file=outfile, sep='\t')
 
 }
 
