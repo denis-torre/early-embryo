@@ -440,7 +440,7 @@ def runStar(infiles, outfile):
 		--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
+	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=True, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
 
 # ls arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*.log | jsc
 # ls arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*Log.out | lr
@@ -472,7 +472,7 @@ def getJunctionCounts(infiles, outfile):
 ########## 5. RSEM expression
 #############################################
 
-@follows(runStar)
+# @follows(runStar)
 
 # # @transform('arion/illumina/s04-alignment.dir/human/2C_vs_4C/STAR/pass2/human_4C_B3_9/human_4C_B3_9-Aligned.toTranscriptome.out.bam',
 # @transform('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/human_morula_Rep15-Aligned.toTranscriptome.out.bam',
@@ -508,7 +508,7 @@ def runRsem(infiles, outfile):
 		# --calc-ci \
 
 	# Run
-	run_job(cmd_str, outfile, W="02:00", GB=2, n=25, modules=['rsem/1.3.3'], print_outfile=True, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
+	run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_outfile=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
 # find arion/geo_illumina/s03-alignment.dir/*/RSEM -name "*.log" | grep -v 'rsem' | jsc
 
@@ -586,7 +586,7 @@ def aggregateCounts(infiles, outfile):
 # @collate(runStar,
 # @collate('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
 # @collate('arion/illumina/s04-alignment.dir/human/all/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
-@collate(('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam', 'arion/illumina/s04-alignment.dir/human/all/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam', 'arion/geo_illumina/s05-macaque.dir/alignment/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam'),
+@collate(('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam', 'arion/illumina/s04-alignment.dir/human/all/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam', 'arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam'),
 		 regex(r'.*.dir/(.*)/STAR/pass2/.*/.*.bam'),
 		 r'arion/geo_illumina/summary.dir/sashimi/settings/\1-bams.txt')
 
@@ -857,7 +857,69 @@ def runPrimateRsem(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, W="02:00", GB=2, n=25, modules=['rsem/1.3.3'], print_outfile=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
-# find arion/geo_illumina/s05-primates.dir/*/RSEM/results -name "*.log" | grep -v 'rsem.log'
+#############################################
+########## 7. Prepare metadata
+#############################################
+
+# @collate('arion/geo_illumina/s03-alignment.dir/*/RSEM/*/*.isoforms.results',
+@collate(runPrimateRsem,
+		 regex(r'(.*)/(.*)/RSEM/.*.isoforms.results'),
+		 r'\1/\2/RSEM/counts/\2-sample_metadata.tsv')
+
+def preparePrimateSampleMetadata(infiles, outfile):
+
+	# Create directory
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Prepare dict
+	sample_dict = [{'files': x, 'names': x.split('/')[-2], 'cell_type': x.split('/')[-2].split('_')[1]} for x in infiles]
+
+	# Convert to dataframe
+	sample_dataframe = pd.DataFrame(sample_dict)
+
+	# Write
+	sample_dataframe.to_csv(outfile, sep='\t', index=False)
+
+#############################################
+########## 8. Aggregate
+#############################################
+
+# @transform(preparePrimateSampleMetadata,
+@transform('arion/geo_illumina/s05-primates.dir/*/RSEM/counts/*-sample_metadata.tsv',
+		   suffix('-sample_metadata.tsv'),
+		   add_inputs(human_filtered_gtf),
+		   '-counts.rda')
+
+def aggregatePrimateCounts(infiles, outfile):
+
+	# Run
+	run_r_job('aggregate_counts', infiles, outfile, conda_env='env', run_locally=False, W='00:10', GB=15, n=1, wait=False, ow=True, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 9. Create BigWig
+#############################################
+
+# @transform(runPrimateStar,
+@transform('arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
+		   suffix('-Aligned.sortedByCoord.out.bam'),
+		   '.bw')
+
+def createPrimateBigWig(infile, outfile):
+
+	# Command
+	cmd_str = """bamCoverage --outFileFormat=bigwig --skipNonCoveredRegions --numberOfProcessors=50 --normalizeUsing RPKM -b {infile} -o {outfile}""".format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, conda_env='env', W='03:00', n=5, GB=6)
+
+#############################################
+########## 7. Aggregate counts
+#############################################
+
+# find arion/geo_illumina/s05-primates.dir/*/RSEM/results -name "*.log" | grep -v 'rsem.log' | jsc
+# find arion/geo_illumina/s05-primates.dir/*/RSEM/results -name "*.isoforms.results" | wc -l
 
 # @follows(linkFASTQ)
 
