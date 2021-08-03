@@ -548,22 +548,24 @@ def transcriptJobs():
 def getTssBed(infile, outfile):
 
 	# Run
-	run_r_job('get_tss_bed', infile, outfile, run_locally=True)#, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+	run_r_job('get_tss_bed', infile, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 #############################################
 ########## 2. TSS sample dataframe
 #############################################
 
-@collate('arion/atacseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered.bam',
-		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/.*.bam'),
-		 add_inputs(r'\1/s06-tss_coverage.dir/\2/\2-tss_500bp.bed'),
-		 r'\1/s06-tss_coverage.dir/\2/\2-atacseq_samples_tss.csv')
+@follows(getTssBed)
+
+@transform('arion/atacseq/s06-tss_coverage.dir/*/*-tss_500bp*.bed',
+		   regex(r'(.*)/(s06-tss_coverage.dir)/(.*)/(.*).bed'),
+		   add_inputs(r'arion/atacseq/s03-alignment.dir/\3/bowtie2/results/*/*_filtered.bam'),
+		   r'\1/\2/\3/\4_samples.csv')
 
 def getSampleMetadataTss(infiles, outfile):
 
 	# Split
-	bam_files = [x[0] for x in infiles]
-	bed_file = infiles[0][1]
+	bed_file = infiles[0]
+	bam_files = infiles[1:]
 
 	# Sample dataframe
 	sample_dataframe = pd.DataFrame([{
@@ -617,6 +619,76 @@ def intersectTssPeaks(infiles, outfile):
 	
 	# Run
 	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:30', n=1, GB=25, print_cmd=False)#, stdout=outfile.replace('.narrowPeak', '.log'), stderr=outfile.replace('.narrowPeak', '.err'))
+
+#######################################################
+#######################################################
+########## S6. TSS scores
+#######################################################
+#######################################################
+
+#############################################
+########## 1.1 Split TSS by isoform class
+#############################################
+
+def tssJobs():
+	for organism, reference_info in reference_dict.items():
+		infiles = list(reference_info.values())
+		outfile = 'arion/atacseq/s07-tss_scores.dir/{organism}/bed/Known_TSS_500bp.bed'.format(**locals())
+		yield [infiles, outfile]
+
+@files(tssJobs)
+
+def splitTssTypes(infiles, outfile):
+
+	# Run
+	run_r_job('split_tss_types', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 2. Shuffle TSS BED
+#############################################
+
+@follows(splitTssTypes)
+
+@transform('arion/atacseq/s07-tss_scores.dir/*/bed/*.bed',
+		   regex(r'(.*)/(.*)/bed/(.*).bed'),
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.nochr.chromsizes', r'arion/datasets/reference_genomes/\2/*_transcript.bed'),
+		   r'\1/\2/bed/\3_shuffled.bed')
+
+def shuffleTssBed(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bedtools shuffle -excl {infiles[2]} -i {infiles[0]} -g {infiles[1]} > {outfile} '''.format(**locals()) # -chrom
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:05', GB=5, n=1, print_cmd=False, ow=False)
+
+#############################################
+########## 3. TSS overlap
+#############################################
+
+def tssScoreJobs():
+	for organism in ['human']:
+		bed_files = glob.glob('arion/atacseq/s07-tss_scores.dir/{organism}/bed/*.bed'.format(**locals()))
+		bigwig_files = glob.glob('arion/atacseq/s05-counts.dir/{organism}/merged_bw/*.bw'.format(**locals()))
+		for bigwig_file in bigwig_files:
+			bigwig_name = os.path.basename(bigwig_file)[:-len('.bw')]
+			for bed_file in bed_files:
+				bed_name = os.path.basename(bed_file)[:-len('.bed')]
+				infiles = [bigwig_file, bed_file]
+				outfile = 'arion/atacseq/s07-tss_scores.dir/{organism}/average_scores/{bigwig_name}-{bed_name}-scores.tsv'.format(**locals())
+				yield [infiles, outfile]
+
+# @follows(getTssBed, shuffleTssBed, mergeScaledBigWig)
+
+@files(tssScoreJobs)
+
+def getTssScores(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bigWigAverageOverBed {infiles[0]} {infiles[1]} {outfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:10', GB=30, n=1, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
 #######################################################
 #######################################################
@@ -798,7 +870,7 @@ def plotIsoformProfile2(infiles, outfile):
 def tssJobs():
 	for organism, reference_info in reference_dict.items():
 		infiles = list(reference_info.values())
-		outfile = 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average/{organism}/bed/Known_TSS.bed'.format(**locals())
+		outfile = 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/{organism}/bed/Known_TSS.bed'.format(**locals())
 		yield [infiles, outfile]
 
 @files(tssJobs)
@@ -806,7 +878,7 @@ def tssJobs():
 def splitTSS(infiles, outfile):
 
 	# Run
-	run_r_job('split_tss', infiles, outfile, run_locally=True)#conda_env='env', modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+	run_r_job('split_tss', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 #############################################
 ########## 1.2 Matrix
@@ -816,8 +888,8 @@ def splitTSS(infiles, outfile):
 
 @collate('arion/atacseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered_scaled.bw',
 		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/.*/.*.bw'),
-		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average/\2/bed/*.bed'),
-		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average/\2/\2-matrix.gz')
+		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/\2/bed/*.bed'),
+		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/\2/\2-matrix.gz')
 
 def computeTssMatrix(infiles, outfile):
 
@@ -867,8 +939,8 @@ def computeTssMatrix(infiles, outfile):
 ### Averaged
 @collate('arion/atacseq/s05-counts.dir/human/merged_bw/*.bw',
 		 regex(r'(.*)/s05-counts.dir/(.*)/merged_bw/.*.bw'),
-		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average/\2/bed/*.bed'),
-		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average/\2/\2-matrix.gz')
+		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/\2/bed/*.bed'),
+		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/\2/\2-matrix.gz')
 
 def computeTssMatrixAverage(infiles, outfile):
 
@@ -920,7 +992,7 @@ def computeTssMatrixAverage(infiles, outfile):
 #############################################
 
 # 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled/human/human-matrix.gz', 
-@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average/human/human-matrix.gz'),
+@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/human/human-matrix.gz'),
 # @transform(computeTssMatrix,
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
@@ -956,7 +1028,7 @@ def plotTssHeatmap(infiles, outfile):
 #############################################
 
 # 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled/human/human-matrix.gz', 
-@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average/human/human-matrix.gz'),
+@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/human/human-matrix.gz'),
 # @transform(computeTssMatrix,
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
