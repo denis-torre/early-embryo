@@ -430,7 +430,7 @@ def filterJobs():
 				outfile = 'arion/illumina/s04-alignment.dir/{organism}/{comparison_string}/gtf/{gtf_prefix}-{comparison_string}-SJ_filtered.gtf'.format(**locals())
 				yield [infiles, outfile, comparison]
 
-@follows(getJunctionCounts)
+# @follows(getJunctionCounts)
 
 @files(filterJobs)
 
@@ -454,7 +454,7 @@ def buildStarIndexFiltered(infiles, outfile):
 	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[1]} --sjdbGTFfile {infiles[0]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=3, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=True)
+	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=3, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-4:]), wait=False)
 
 # find arion/illumina/s04-alignment.dir/*/isoseq/*/STAR/index -name "job.log" | jsc
 
@@ -569,7 +569,7 @@ def runRsem(infiles, outfile):
 		# --calc-ci \
 
 	# Run
-	# run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
+	run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=True, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
 #############################################
 ########## 4. Create BigWig
@@ -653,8 +653,7 @@ def prepareSampleMetadata(infiles, outfile):
 def aggregateCounts(infiles, outfile):
 
 	# Run
-	print(outfile)
-	# run_r_job('aggregate_counts', infiles, outfile, conda_env='env', run_locally=False, W='00:30', GB=30, n=1, wait=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+	run_r_job('aggregate_counts', infiles, outfile, conda_env='env', run_locally=False, W='00:30', GB=30, n=1, wait=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
 # find arion/illumina/s05-expression.dir/*/all -name "*counts*" | xargs rm
 
@@ -683,7 +682,7 @@ def getTranscriptTPM(infile, outfile):
 def getGeneExpression(infile, outfile):
 
 	# Run
-	run_r_job('get_gene_expression', infile, outfile, run_locally=True, ow=False)
+	run_r_job('get_gene_expression', infile, outfile, conda_env='env', run_locally=False, ow=False)
 
 #######################################################
 #######################################################
@@ -795,7 +794,7 @@ def runDESeq2(infiles, outfiles, outfileRoot):
 def runGoEnrichment(infile, outfile):
 
 	# Run
-	run_r_job('run_go_enrichment', infile, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+	run_r_job('run_go_enrichment', infile, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'))
 
 #############################################
 ########## 2. Domain
@@ -811,7 +810,7 @@ def runGoEnrichment(infile, outfile):
 def runDomainEnrichment(infiles, outfile):
 
 	# Run
-	run_r_job('run_domain_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+	run_r_job('run_domain_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'))
 
 # #############################################
 # ########## 3. Repeats
@@ -827,7 +826,7 @@ def runDomainEnrichment(infiles, outfile):
 def runRepeatEnrichment(infiles, outfile):
 
 	# Run
-	run_r_job('run_repeat_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+	run_r_job('run_repeat_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'))
 
 #######################################################
 #######################################################

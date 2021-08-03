@@ -108,7 +108,13 @@ filter_gtf <- function(infiles, outfile, comparison) {
     transcripts_to_remove <- abundance_dataframe %>% filter(fl_counts < min_fl_threshold & transcript_novelty != 'Known') %>% pull(annot_transcript_id)
 
     # Get SJ-supported, FL-filtered transcripts
-    filtered_transcripts <- setdiff(junction_transcripts, transcripts_to_remove)
+    filtered_multiexonic_transcripts <- setdiff(junction_transcripts, transcripts_to_remove)
+
+    # Get FL-filtered, monoexonic transcripts (won't have SJ support)
+    filtered_monoexonic_transcripts <- abundance_dataframe %>% filter(n_exons == 1 & transcript_novelty == 'Known' & fl_counts >= min_fl_threshold) %>% pull(annot_transcript_id)
+
+    # Concatenate
+    filtered_transcripts <- c(filtered_multiexonic_transcripts, filtered_monoexonic_transcripts)
 
     # Filter GTF
     gtf_filtered <- gtf[gtf$transcript_id %in% filtered_transcripts,]
@@ -460,7 +466,7 @@ cluster_genes <- function(infile, outfile) {
 
     # Turn adjacency into topological overlap
     TOM <- TOMsimilarity(adjacency, TOMType = "signed");
-    dissTOM <- 1-TOM
+    dissTOM <- 1-TOM # ???
     rownames(dissTOM) <- colnames(log1p_dataframe)
     colnames(dissTOM) <- colnames(log1p_dataframe)
 
