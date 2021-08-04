@@ -870,7 +870,7 @@ def plotIsoformProfile2(infiles, outfile):
 def tssJobs():
 	for organism, reference_info in reference_dict.items():
 		infiles = list(reference_info.values())
-		outfile = 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/{organism}/bed/Known_TSS.bed'.format(**locals())
+		outfile = 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/{organism}/bed/Known_TSS.bed'.format(**locals())
 		yield [infiles, outfile]
 
 @files(tssJobs)
@@ -881,22 +881,38 @@ def splitTSS(infiles, outfile):
 	run_r_job('split_tss', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 #############################################
-########## 1.2 Matrix
+########## 1.2 Get background
+#############################################
+
+@collate('arion/atacseq/s07-tss_scores.dir/human/bed/*_shuffled.bed',
+		 regex(r'(.*)/s07-tss_scores.dir/(.*)/bed/.*.bed'),
+		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/\2/bed/Shuffled_TSS.bed')
+
+def mergeShuffledTSS(infiles, outfile):
+
+	# Get infiles
+	infiles_str = ' '.join(infiles)
+
+	# Merge
+	os.system('cat {infiles_str} > {outfile}'.format(**locals()))
+
+#############################################
+########## 1.3 Matrix
 #############################################
 
 # @follows(createBigWig, splitGTF)
 
 @collate('arion/atacseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered_scaled.bw',
 		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/.*/.*.bw'),
-		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/\2/bed/*.bed'),
-		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/\2/\2-matrix.gz')
+		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/\2/bed/*.bed'),
+		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/\2/\2-matrix.gz')
 
 def computeTssMatrix(infiles, outfile):
 
 	# Get order
 	order_dict = {
 		'bigwig': {'1C': 1, '2C': 2, '4C': 3, '8C': 4, 'morula': 5, 'ICM': 6, 'TE': 7},
-		'bed': {'Known_TSS': 1, 'Novel_TSS': 2, 'Antisense_TSS': 3, 'Intergenic_TSS': 4}
+		'bed': {'Known_TSS': 1, 'Novel_TSS': 2, 'Antisense_TSS': 3, 'Intergenic_TSS': 4, 'Shuffled_TSS': 5}
 	}
 
 	# Split
@@ -939,15 +955,15 @@ def computeTssMatrix(infiles, outfile):
 ### Averaged
 @collate('arion/atacseq/s05-counts.dir/human/merged_bw/*.bw',
 		 regex(r'(.*)/s05-counts.dir/(.*)/merged_bw/.*.bw'),
-		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/\2/bed/*.bed'),
-		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/\2/\2-matrix.gz')
+		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/\2/bed/*.bed'),
+		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/\2/\2-matrix.gz')
 
 def computeTssMatrixAverage(infiles, outfile):
 
 	# Get order
 	order_dict = {
 		'bigwig': {'1C': 1, '2C': 2, '4C': 3, '8C': 4, 'morula': 5, 'ICM': 6, 'TE': 7},
-		'bed': {'Known_TSS': 1, 'Novel_TSS': 2, 'Antisense_TSS': 3, 'Intergenic_TSS': 4}
+		'bed': {'Known_TSS': 1, 'Novel_TSS': 2, 'Antisense_TSS': 3, 'Intergenic_TSS': 4, 'Shuffled_TSS': 5}
 	}
 
 	# Split
@@ -977,11 +993,11 @@ def computeTssMatrixAverage(infiles, outfile):
 					--skipZeros -o {outfile}
 	'''.format(**locals())
 
-	# Run
+	# # Run
 	run_job(cmd_str, outfile, conda_env='env', W='10:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
 
 	# Write samples
-	bigwig_names = [x.split('/')[-2].replace('_', ' ') for x in bigwig_str.split(' ')]
+	bigwig_names = [os.path.basename(x)[:-len('.bw')].split('_')[-1] for x in bigwig_str.split(' ')]
 	jsonfile = outfile.replace('.gz', '.json')
 	if not os.path.exists(jsonfile):
 		with open(jsonfile, 'w') as openfile:
@@ -992,7 +1008,7 @@ def computeTssMatrixAverage(infiles, outfile):
 #############################################
 
 # 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled/human/human-matrix.gz', 
-@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/human/human-matrix.gz'),
+@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/human/human-matrix.gz'),
 # @transform(computeTssMatrix,
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
@@ -1028,11 +1044,11 @@ def plotTssHeatmap(infiles, outfile):
 #############################################
 
 # 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled/human/human-matrix.gz', 
-@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new/human/human-matrix.gz'),
+@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/human/human-matrix.gz'),
 # @transform(computeTssMatrix,
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
-		   r'\1_profile_v3.png')
+		   r'\1_profile_v2.png')
 
 def plotTssProfile(infiles, outfile):
 
@@ -1041,12 +1057,14 @@ def plotTssProfile(infiles, outfile):
 		samples_label = '" "'.join(json.load(openfile))
 
 	# Command
-					# --samplesLabel "{samples_label}" \
 	cmd_str = ''' plotProfile -m {infiles[0]} \
 					--refPointLabel TSS \
+					--samplesLabel "{samples_label}" \
 					--plotHeight 6 \
 					--plotWidth 5 \
-					--colors "#6BAED6" "#EE6A50" "#66C2A4" "#E9967A" \
+					--yMax 3.5 \
+					--colors "#6BAED6" "#EE6A50" "#66C2A4" "#E9967A" "#999999" \
+					--legendLocation "upper-left" \
 					-out {outfile}
 	'''.format(**locals())
 					# --numPlotsPerRow 4 \
