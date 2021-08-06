@@ -74,6 +74,14 @@ with open('/sc/arion/projects/GuccioneLab/genome-indices/genome-indices.json') a
 # All FASTQ
 all_illumina_fastq = glob.glob('arion/chipseq/s01-fastq.dir/*/*/*/*.f*q.gz')
 
+# References
+reference_dict = {
+	'human': {
+		'filtered_gtf': 'arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf',
+		'talon_abundance': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_abundance_filtered.tsv'		
+	}
+}
+
 #######################################################
 #######################################################
 ########## S1. FASTQ
@@ -132,7 +140,31 @@ def trimIlluminaAdapters(infiles, outdir):
 	# Run
 	run_job(cmd_str, outdir, modules=['trim_galore/0.6.6'], W='10:00', GB=6, n=6, print_outfile=True, stdout=os.path.join(outdir, 'job.log'), stderr=os.path.join(outdir, 'job.err'))
 
-# find arion/chipseq/s01-fastq.dir/human/trimmed -name "*.log" | jsc
+#############################################
+########## 3. Read trimming
+#############################################
+
+def trim50Jobs():
+	for sample_path in glob.glob('arion/chipseq/s01-fastq.dir/*/raw/*'):
+		infiles = glob.glob(os.path.join(sample_path, '*'))
+		infiles.sort()
+		outdir = sample_path.replace('/raw/', '/trimmed_50bp/')
+		yield [infiles, outdir]
+
+# @follows(linkFASTQ)
+
+@files(trim50Jobs)
+
+def trimReads(infiles, outdir):
+
+	# Command
+	cmd_str = '''trim_galore --cores 6 --hardtrim5 50 --output_dir {outdir} {infiles[0]}'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outdir, modules=['trim_galore/0.6.6'], W='06:00', GB=6, n=6, print_cmd=False, stdout=os.path.join(outdir, 'job.log'), stderr=os.path.join(outdir, 'job.err'))
+
+# find arion/chipseq/s01-fastq.dir/human/trimmed_50bp -name "*.log" | jsc
+# du -hs arion/chipseq/s01-fastq.dir/human/trimmed_50bp/*/*.fq.gz
 
 #######################################################
 #######################################################
@@ -144,7 +176,7 @@ def trimIlluminaAdapters(infiles, outdir):
 ########## 1. FASTQC
 #############################################
 
-@follows(linkFASTQ, trimIlluminaAdapters)
+# @follows(linkFASTQ, trimIlluminaAdapters, trimReads)
 
 @transform(all_illumina_fastq,
 		   regex(r'(.*)/s01-fastq.dir/(.*).f.*q.gz'),
@@ -170,7 +202,9 @@ def qcJobs():
 	filelist = [
 		['arion/chipseq/s02-fastqc.dir/human/raw', 'arion/chipseq/multiqc/human_fastqc/multiqc_report.html'],
 		['arion/chipseq/s02-fastqc.dir/human/trimmed', 'arion/chipseq/multiqc/human_fastqc_trimmed/multiqc_report.html'],
-		['arion/chipseq/s03-alignment.dir/human', 'arion/chipseq/multiqc/human_alignment_trimmed/multiqc_report.html']
+		['arion/chipseq/s02-fastqc.dir/human/trimmed_50bp', 'arion/chipseq/multiqc/human_fastqc_trimmed_50bp/multiqc_report.html'],
+		['arion/chipseq/s03-alignment.dir/human', 'arion/chipseq/multiqc/human_alignment_trimmed_50bp/multiqc_report.html']
+		# ['arion/chipseq/s03-alignment.dir/human', 'arion/chipseq/multiqc/human_alignment_trimmed/multiqc_report.html']
 	]
 	for files in filelist:
 		yield [files[0], files[1]]
@@ -199,10 +233,10 @@ def runMultiQC(infile, outfile):
 # @follows(trimIlluminaAdapters)
 
 # @collate('arion/chipseq/s01-fastq.dir/human/raw/*/*.fastq.gz',
-# @collate('arion/chipseq/s01-fastq.dir/human/trimmed/human_4C_3PN_H3K27me3_Rep1_50/*.fq.gz',
-@collate('arion/chipseq/s01-fastq.dir/human/trimmed/*/*.fq.gz',
- 		 regex(r'(.*)/s01-fastq.dir/(.*)/trimmed/(.*)/.*.fq.gz'),
-		 add_inputs(r'arion/atacseq/s03-alignment.dir/\2/bowtie2/index/*primary_assembly.1.bt2'),
+# @collate('arion/chipseq/s01-fastq.dir/human/trimmed/*/*.fq.gz',
+@collate('arion/chipseq/s01-fastq.dir/human/trimmed_50bp/*/*.fq.gz',
+ 		 regex(r'(.*)/s01-fastq.dir/(.*)/trimmed_50bp/(.*)/.*.fq.gz'),
+		 add_inputs(r'arion/chipseq/s03-alignment.dir/\2/bowtie2/index/*primary_assembly.1.bt2'),
 		 r'\1/s03-alignment.dir/\2/bowtie2/results/\3/\3.bam')
 
 def runBowtie(infiles, outfile):
@@ -214,7 +248,7 @@ def runBowtie(infiles, outfile):
 
 	# FASTQ string
 	if len(fastq) == 1:
-		fastq_str = '-U {fastq[0]}'.format(**locals())
+		fastq_str = '-U {fastq[0]} -N 1 -L 25'.format(**locals())
 	elif len(fastq) == 2:
 		fastq_str = '-1 {fastq[0]} -2 {fastq[1]} -X 1000 --no-mixed --no-discordant'.format(**locals())
 
@@ -223,7 +257,7 @@ def runBowtie(infiles, outfile):
 		samtools index -b {outfile} && samtools flagstat {outfile} > {outname}.flagstat && samtools idxstats {outfile} > {outname}.idxstats && samtools stats {outfile} > {outname}.stats && samtools view {outfile} | cut -f5 | sort | uniq -c | sort -b -k2,2n | sed -e 's/^[ \\t]*//' > {outname}.mapq'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W='10:00', n=10, GB=5, modules=['bowtie2/2.4.1', 'samtools/1.9'], stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'), print_outfile=False, ow=False)
+	# run_job(cmd_str, outfile, W='06:00', n=10, GB=5, modules=['bowtie2/2.4.1', 'samtools/1.9'], stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'), print_outfile=False, ow=False)
 
 # Publication parameters: -N 1 -L 25 (single end), -N 1 -L 25 -X 1000 --no-mixed --no-discordant (paired end), -N maximum number of mismatches, -L seed length, -X maximum fragment length
 # find arion/chipseq/s03-alignment.dir/human/bowtie2/results -name "*.log" | jsc
@@ -231,15 +265,15 @@ def runBowtie(infiles, outfile):
 #############################################
 ########## 2. Filter
 #############################################
-# Removes duplicates, and any reads not mapping to chromosomes 1-19, X, Y.
+# Removes duplicates, and any reads not mapping to chromosomes 1-22, X, Y.
 # "[XS] == null" - multimappers
 # "not unmapped"
 # "not duplicate"
-# "ref_id <= 21 and ref_id != 19" - chromosomes 1-19,X,Y (no chrM)
+# "ref_id <= 25 and ref_id != 23" - chromosomes 1-22,X,Y (no chrM)
 # "mapping_quality >= 30"
 # fragment lengths is empty for single end data
 
-# @transform('arion/chipseq/s03-alignment.dir/human/bowtie2/results/*/*0.bam',
+# @transform('arion/chipseq/s03-alignment.dir/human/bowtie2/results/*/*.bam',
 @transform(runBowtie,
 		   suffix('.bam'),
 		   '_filtered.bam')
@@ -250,21 +284,24 @@ def filterBam(infile, outfile):
 	outname = outfile.replace('.bam', '')
 
 	# Command
-	cmd_str = ''' sambamba view --with-header --nthreads 30 --format bam --filter "ref_id <= 21 and ref_id != 19 and not unmapped and not duplicate and mapping_quality >= 30" {infile} > {outfile} && \
+	cmd_str = ''' sambamba view --with-header --nthreads 30 --format bam --filter "ref_id <= 24 and ref_id != 22 and not unmapped and not duplicate and mapping_quality >= 30" {infile} > {outfile} && \
 		samtools index -b {outfile} && samtools flagstat {outfile} > {outname}.flagstat && samtools idxstats {outfile} > {outname}.idxstats && samtools stats {outfile} > {outname}.stats && samtools view {outfile} | awk '$9>0' | cut -f9 | sort | uniq -c | sort -b -k2,2n | sed -e 's/^[ \\t]*//' > {outname}.fragment_lengths.txt'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W='03:00', n=5, GB=5, modules=['samtools/1.9', 'sambamba/0.5.6'])#, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'), print_outfile=False)
+	# run_job(cmd_str, outfile, W='03:00', n=5, GB=5, modules=['samtools/1.9', 'sambamba/0.5.6'])#, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'), print_outfile=False)
 
 # find arion/chipseq/s03-alignment.dir -name "*filtered*" | xargs rm
-# find arion/chipseq/s03-alignment.dir/human/bowtie2/results -name "_filtered.log" | js
+# find arion/chipseq/s03-alignment.dir/human/bowtie2/results -name "*_filtered.log" | js
+# find arion/chipseq/s03-alignment.dir/human/bowtie2/results -name "*_filtered.bam" | wc -l
+# find arion/chipseq/s03-alignment.dir/human/bowtie2/results -name "*_filtered.stats" | wc -l
+# find arion/chipseq/s03-alignment.dir/human/bowtie2/results -name "*.bam" | xargs du -hs
 
 #############################################
 ########## 3. Create BigWig
 #############################################
 
 # @transform(filterBam,
-@transform('arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/*_filtered.bam',
+@transform('arion/chipseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered.bam',
 		   suffix('.bam'),
 		   add_inputs('/sc/arion/projects/GuccioneLab/genome-indices/hg38/blacklists/hg38-blacklist.v2.bed'),
 		   '.bw')
@@ -277,8 +314,8 @@ def createBigWig(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, conda_env='env', W='06:00', n=8, GB=4, print_outfile=False)
 
-# find arion/chipseq/s03-alignment_old.dir/ -name "*.bw"
-# ls /hpc/users/torred23/pipelines/projects/early-embryo/embryo-chipseq/arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/*.bw
+# find arion/chipseq/s03-alignment.dir/ -name "*.bw"
+# ls /hpc/users/torred23/pipelines/projects/early-embryo/embryo-chipseq/arion/chipseq/s03-alignment.dir/human/bowtie2/results/*/*.bw
 
 #######################################################
 #######################################################
@@ -291,30 +328,32 @@ def createBigWig(infiles, outfile):
 #############################################
 
 # @transform(filterBam,
-# @transform('arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/human_4C_*1_*50_filtered.bam',
-@transform('arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/*_filtered.bam',
-		   regex(r'(.*)/s03-alignment_old.dir/(.*)/bowtie2/results/(.*)/.*.bam'),
-		   r'\1/s04-peaks.dir/\2/macs2/\3/\3_peaks.xls')
+# @transform('arion/chipseq/s03-alignment.dir/human/bowtie2/results/*/human_4C_*1_*50_filtered.bam',
+# @transform('arion/chipseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered.bam',
+@collate('arion/chipseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered.bam',
+		  regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/(.*)_Rep.*/.*.bam'),
+		  r'\1/s04-peaks.dir/\2/macs2/\3/\3_peaks.xls')
 
-def runMacs2(infile, outfile):
+def runMacs2(infiles, outfile):
 
 	# Base settings
+	bam_str = ' '.join(infiles)
 	basename = outfile.replace('_peaks.xls', '')
 	organism = outfile.split('/')[-4].replace('human', 'hs').replace('mouse', 'mm')
 
 	# Specific settings
-	file_type = 'BAM' if '_50' in infile else 'BAMPE'
-	additional_parameters = '--broad --broad-cutoff 0.05' if 'H3K27me3' in infile else ''
+	additional_parameters = '--broad --broad-cutoff 0.05'# if 'H3K27me3' in outfile or 'H3K27ac' in outfile else ''
 	
+	# --nomodel \
+	# --nolambda \
 	# Command
 	cmd_str = ''' macs2 callpeak \
-		-t {infile} \
-		-f {file_type} \
-		--nomodel \
-		--nolambda \
+		-t {bam_str} \
+		-f BAM \
+		-q 0.05 \
 		{additional_parameters} \
-		-n {basename} \
-		-g {organism} '''.format(**locals())
+		-g {organism} \
+		-n {basename} '''.format(**locals())
 
 	# Run
 	run_job(cmd_str, outfile, modules=['macs/2.1.0'], W='06:00', n=1, GB=30, print_cmd=False, stdout=outfile.replace('.xls', '.log'), stderr=outfile.replace('.xls', '.err'))
@@ -326,7 +365,7 @@ def runMacs2(infile, outfile):
 ########## 2. Rename
 #############################################
 
-@transform('arion/chipseq/s04-peaks.dir/human/macs2--nolambda--nomodel/*/*_peaks.xls',
+@transform(runMacs2,
 		   suffix('.xls'),
 		   '.chr.xls')
 
@@ -352,9 +391,9 @@ def renamePeaks(infile, outfile):
 ########## 1. Sample dataframe
 #############################################
 
-@collate('arion/chipseq/s03-alignment_old.dir/human/bowtie2/results/*/*_filtered.bam',
-		 regex(r'(.*)/s03-alignment_old.dir/(.*)/bowtie2/results/.*.bam'),
-		 r'\1/s05-counts.dir/\2/\2-chipseq_samples.csv')
+@collate('arion/chipseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered.bam',
+		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/.*_(H3.*?)_Rep.*.bam'),
+		 r'\1/s05-counts.dir/\2/\3/\2-\3-chipseq_samples.csv')
 
 def getSampleMetadata(infiles, outfile):
 
@@ -369,8 +408,8 @@ def getSampleMetadata(infiles, outfile):
 	# Add information
 	sample_dataframe['Tissue'] = [x.split('_')[1].replace('control', 'control_8C').replace('TBE', 'TBE_8C') for x in sample_dataframe['SampleID']]
 	sample_dataframe['Condition'] = [x.split('_H3')[0].split('_')[-1] for x in sample_dataframe['SampleID']]
-	sample_dataframe['Peaks'] = ['arion/chipseq/s04-peaks.dir/human/macs2--nolambda--nomodel/{x}/{x}_peaks.chr.xls'.format(**locals()) for x in sample_dataframe['SampleID']]
-	# sample_dataframe['Peaks'] = ['arion/atacseq/s04-peaks.dir/human/genrich/combined/'+x.split('_Rep')[0]+'/'+x.split('_Rep')[0]+'-genrich.chr.narrowPeak' for x in sample_dataframe['SampleID']]
+	sample_dataframe['Factor'] = [x.split('_Rep')[0].split('_')[-1] for x in sample_dataframe['SampleID']]
+	sample_dataframe['Peaks'] = ['arion/chipseq/s04-peaks.dir/human/macs2/human_{Tissue}_{Condition}_{Factor}/human_{Tissue}_{Condition}_{Factor}_peaks.chr.xls'.format(**rowData) for index, rowData in sample_dataframe.iterrows()]
 
 	# Outdir
 	outdir = os.path.dirname(outfile)
@@ -407,6 +446,336 @@ def getSizeFactors(infile, outfile):
 
 	# Run
 	run_r_job('get_size_factors', infile, outfile, conda_env='env', W='00:30', GB=50, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+#############################################
+########## 4. Create scaled BigWig
+#############################################
+
+@transform(filterBam,
+		   regex(r'(.*)/(s03-alignment.dir)/(.*?)/(.*_)(H3.*?)(_.*).bam'),
+		   add_inputs('/sc/arion/projects/GuccioneLab/genome-indices/hg38/blacklists/hg38-blacklist.v2.bed', r'\1/s05-counts.dir/\3/\5/\3-\5-chipseq_size_factors.tsv'),
+		   r'\1/\2/\3/\4\5\6_scaled.bw')
+
+def createScaledBigWig(infiles, outfile):
+
+	# Read size factor
+	normalization_dict = pd.read_table(infiles[2], index_col='sample_name')['size_factor_reciprocal'].to_dict()
+	size_factor = normalization_dict[outfile.split('/')[-2]]
+
+	# Command
+	cmd_str = """bamCoverage --outFileFormat=bigwig --binSize=10 --skipNonCoveredRegions --numberOfProcessors=48 --scaleFactor {size_factor} --blackListFileName {infiles[1]} -b {infiles[0]} -o {outfile}""".format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, conda_env='env', W='06:00', n=8, GB=4, print_cmd=False)
+
+#############################################
+########## 5. Merge scaled BigWig
+#############################################
+
+@collate(createScaledBigWig,
+		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/(.*)_Rep.*/.*.bw'),
+		 r'\1/s05-counts.dir/\2/merged_bw/\3.bw')
+
+def mergeScaledBigWig(infiles, outfile):
+	
+	# Multiple files
+	if len(infiles) > 1:
+
+		# Files
+		wig_file = outfile.replace('.bw', '.wig')
+		bedgraph_file = outfile.replace('.bw', '.bedgraph')
+		infiles_str = ' '.join(infiles)
+
+		# Command
+		cmd_str = """ wiggletools mean {infiles_str} > {wig_file} && wiggletools write_bg - {wig_file} > {bedgraph_file} && bedGraphToBigWig {bedgraph_file} arion/chipseq/s05-counts.dir/human/hg38.chrom.sizes {outfile} && rm {wig_file} {bedgraph_file} """.format(**locals())
+
+		# Run
+		run_job(cmd_str, outfile, modules=['wiggletools/1.2', 'ucsc-utils/2020-03-17'], W='00:30', n=1, GB=10, print_cmd=False, stdout=outfile.replace('.bw', '.log'), stderr=outfile.replace('.bw', '.err'))
+
+	# Single file
+	else:
+		if not os.path.exists(outfile):
+			os.system('cp {infiles[0]} {outfile}'.format(**locals()))
+
+#######################################################
+#######################################################
+########## S6. TSS coverage
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Get TSS BED
+#############################################
+
+def transcriptJobs():
+	for organism, reference_info in reference_dict.items():
+		infile = reference_info['filtered_gtf']
+		outfile = 'arion/chipseq/s06-tss_coverage.dir/{organism}/{organism}-tss.bed'.format(**locals())
+		yield [infile, outfile]
+
+@files(transcriptJobs)
+
+def getTssBed(infile, outfile):
+
+	# Run
+	run_r_job('get_tss_bed', infile, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 2. Intersect peaks
+#############################################
+
+# @follows(runGenrich, getTssRange)
+
+@transform('arion/chipseq/s04-peaks.dir/human/macs2/*/*.broadPeak',
+		   regex(r'(.*)/s04-peaks.dir/(.*)/macs2/(.*)/.*.broadPeak'),
+		   add_inputs(r'\1/s06-tss_coverage.dir/\2/\2-tss.bed'),
+		   r'\1/s06-tss_coverage.dir/\2/intersect/\3-tss_peaks_intersect.bed')
+
+def intersectTssPeaks(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bedtools intersect -wa -a {infiles[1]} -b {infiles[0]} > {outfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:30', n=1, GB=25, print_cmd=False)#, stdout=outfile.replace('.narrowPeak', '.log'), stderr=outfile.replace('.narrowPeak', '.err'))
+
+#######################################################
+#######################################################
+########## S6. TSS scores
+#######################################################
+#######################################################
+
+#############################################
+########## 1.1 Split TSS by isoform class
+#############################################
+
+def tssJobs():
+	for organism, reference_info in reference_dict.items():
+		infiles = list(reference_info.values())
+		outfile = 'arion/chipseq/s07-tss_scores.dir/{organism}/bed/Known_TSS.bed'.format(**locals())
+		yield [infiles, outfile]
+
+@files(tssJobs)
+
+def splitTssTypes(infiles, outfile):
+
+	# Run
+	run_r_job('split_tss_types', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 2. Shuffle TSS BED
+#############################################
+
+@follows(splitTssTypes)
+
+@transform('arion/chipseq/s07-tss_scores.dir/*/bed/*.bed',
+		   regex(r'(.*)/(.*)/bed/(.*).bed'),
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.nochr.chromsizes', r'arion/datasets/reference_genomes/\2/*_transcript.bed'),
+		   r'\1/\2/bed/\3_shuffled.bed')
+
+def shuffleTssBed(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bedtools shuffle -excl {infiles[2]} -i {infiles[0]} -g {infiles[1]} > {outfile} '''.format(**locals()) # -chrom
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:05', GB=5, n=1, print_cmd=False, ow=False)
+
+#############################################
+########## 3. TSS overlap
+#############################################
+
+def tssScoreJobs():
+	for organism in ['human']:
+		bed_files = glob.glob('arion/chipseq/s07-tss_scores.dir/{organism}/bed/*.bed'.format(**locals()))
+		bigwig_files = glob.glob('arion/chipseq/s05-counts.dir/{organism}/merged_bw/*.bw'.format(**locals()))
+		for bigwig_file in bigwig_files:
+			bigwig_name = os.path.basename(bigwig_file)[:-len('.bw')]
+			for bed_file in bed_files:
+				bed_name = os.path.basename(bed_file)[:-len('.bed')]
+				infiles = [bigwig_file, bed_file]
+				outfile = 'arion/chipseq/s07-tss_scores.dir/{organism}/average_scores/{bigwig_name}-{bed_name}-scores.tsv'.format(**locals())
+				yield [infiles, outfile]
+
+# @follows(getTssBed, shuffleTssBed, mergeScaledBigWig)
+
+@files(tssScoreJobs)
+
+def getTssScores(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bigWigAverageOverBed {infiles[0]} {infiles[1]} {outfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:10', GB=30, n=1, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+#######################################################
+#######################################################
+########## Plots
+#######################################################
+#######################################################
+
+#############################################
+#############################################
+########## 2. TSS heatmap
+#############################################
+#############################################
+
+#############################################
+########## 1.1 Split TSS by isoform class
+#############################################
+
+def tssJobs():
+	for organism, reference_info in reference_dict.items():
+		infiles = list(reference_info.values())
+		outfile = 'arion/chipseq/summary_plots.dir/tss_heatmaps/{organism}/bed/Known_TSS.bed'.format(**locals())
+		yield [infiles, outfile]
+
+@files(tssJobs)
+
+def splitTSS(infiles, outfile):
+
+	# Run
+	run_r_job('split_tss', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 1.2 Get background
+#############################################
+
+@collate('arion/chipseq/s07-tss_scores.dir/human/bed/*_shuffled.bed',
+		 regex(r'(.*)/s07-tss_scores.dir/(.*)/bed/.*.bed'),
+		 r'\1/summary_plots.dir/tss_heatmaps/\2/bed/Shuffled_TSS.bed')
+
+def mergeShuffledTSS(infiles, outfile):
+
+	# Get infiles
+	infiles_str = ' '.join(infiles)
+
+	# Merge
+	os.system('cat {infiles_str} > {outfile}'.format(**locals()))
+
+#############################################
+########## 1.3 Matrix
+#############################################
+
+# @follows(createBigWig, splitGTF)
+
+@collate('arion/chipseq/s05-counts.dir/human/merged_bw/*.bw',
+		 regex(r'(.*)/s05-counts.dir/(.*)/merged_bw/.*_(.*).bw'),
+		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps/\2/bed/*.bed'),
+		 r'\1/summary_plots.dir/tss_heatmaps/\2/\3/\2-\3-matrix.gz')
+
+def computeTssMatrixAverage(infiles, outfile):
+
+	# Get order
+	order_dict = {
+		'bigwig': {'1C': 1, '2C': 2, '4C': 3, '8C': 4, 'morula': 5, 'ICM': 6, 'TE': 7},
+		'bed': {'Known_TSS': 1, 'Novel_TSS': 2, 'Antisense_TSS': 3, 'Intergenic_TSS': 4, 'Shuffled_TSS': 5}
+	}
+
+	# Split
+	bigwigs = [x[0] for x in infiles if 'TBE' not in x[0] and 'control' not in x[0]]
+	beds = infiles[0][1:]
+
+	# Get bigwig order
+	bigwig_str = ' '.join(pd.DataFrame({
+		'bigwig': bigwigs,
+		'order': [order_dict['bigwig'][os.path.basename(x).split('_')[1]] for x in bigwigs]
+	}).sort_values('order')['bigwig'])
+
+	# Get GTF order
+	bed_str = ' '.join(pd.DataFrame({
+		'bed': beds,
+		'order': [order_dict['bed'][os.path.basename(x).split('.')[0]] for x in beds]
+	}).sort_values('order')['bed'])
+
+	# Command
+	cmd_str = ''' computeMatrix reference-point -S {bigwig_str} \
+					-R {bed_str} \
+					--referencePoint center \
+					--beforeRegionStartLength 500 \
+					--afterRegionStartLength 500 \
+					--numberOfProcessors 48 \
+					--skipZeros -o {outfile}
+	'''.format(**locals())
+
+	# Run
+	# run_job(cmd_str, outfile, conda_env='env', W='10:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
+
+	# # Write samples
+	bigwig_names = [os.path.basename(x)[:-len('.bw')].replace('human_', '').replace('_', ' ').split(' H3')[0] for x in bigwig_str.split(' ')]
+	jsonfile = outfile.replace('.gz', '.json')
+	if not os.path.exists(jsonfile):
+		with open(jsonfile, 'w') as openfile:
+			openfile.write(json.dumps(bigwig_names))
+
+#############################################
+########## 1.4 Plot
+#############################################
+
+@transform(computeTssMatrixAverage,
+		   regex(r'(.*).gz'),
+		   add_inputs(r'\1.json'),
+		   r'\1_profile.png')
+
+def plotTssProfile(infiles, outfile):
+
+	# Read JSON
+	with open(infiles[1]) as openfile:
+		samples_label = '" "'.join(json.load(openfile))
+	data_outfile = outfile.replace('.png', '.txt')
+
+	# Command
+	cmd_str = ''' plotProfile -m {infiles[0]} \
+					--refPointLabel TSS \
+					--samplesLabel "{samples_label}" \
+					--plotHeight 6 \
+					--plotWidth 6 \
+					--colors "#6BAED6" "#EE6A50" "#66C2A4" "#E9967A" "#999999" \
+					--legendLocation "lower-right" \
+					-out {outfile} \
+					--outFileNameData {data_outfile}
+	'''.format(**locals())
+	# --yMax 3 2.7 9 8 16 \
+
+	# Run
+	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=5, print_cmd=False, ow=True, run_locally=False)
+
+#############################################
+########## 1.4 Plot
+#############################################
+
+# # 'arion/chipseq/summary_plots.dir/tss_heatmaps_all_reps_scaled/human/human-matrix.gz', 
+# @transform(('arion/chipseq/summary_plots.dir/tss_heatmaps/human/human-matrix.gz'),
+# # @transform(computeTssMatrix,
+# 		   regex(r'(.*).gz'),
+# 		   add_inputs(r'\1.json'),
+# 		   r'\1_v4.png')
+
+# def plotTssHeatmap(infiles, outfile):
+
+# 	# Read JSON
+# 	with open(infiles[1]) as openfile:
+# 		samples_label = '" "'.join(json.load(openfile))
+
+# 	# Command
+# 					# --samplesLabel "{samples_label}" \
+# 	cmd_str = ''' plotHeatmap -m {infiles[0]} \
+# 					--heatmapWidth 5 \
+# 					--heatmapHeight 10 \
+# 					--colorMap Reds \
+# 					--missingDataColor 1 \
+# 					--refPointLabel TSS \
+# 					--legendLocation none \
+# 					--zMax 1 \
+# 					-out {outfile}
+# 	'''.format(**locals())
+# 					# --zMax 0.5 1.5 2.5 3 3 2 2.5 \
+# 					# --yMin 0 \
+# 					# --zMax 60 30 80 120 150 50 60 \
+
+# 	# Run
+# 	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=5, print_cmd=False, ow=True, run_locally=True)
 
 #######################################################
 #######################################################
