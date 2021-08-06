@@ -529,7 +529,7 @@ def mergeScaledBigWig(infiles, outfile):
 
 #######################################################
 #######################################################
-########## S5. TSS coverage
+########## S6. TSS coverage
 #######################################################
 #######################################################
 
@@ -1048,13 +1048,14 @@ def plotTssHeatmap(infiles, outfile):
 # @transform(computeTssMatrix,
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
-		   r'\1_profile_v2.png')
+		   r'\1_profile_v3.png')
 
 def plotTssProfile(infiles, outfile):
 
 	# Read JSON
 	with open(infiles[1]) as openfile:
 		samples_label = '" "'.join(json.load(openfile))
+	data_outfile = outfile.replace('.png', '.txt')
 
 	# Command
 	cmd_str = ''' plotProfile -m {infiles[0]} \
@@ -1065,7 +1066,8 @@ def plotTssProfile(infiles, outfile):
 					--yMax 3.5 \
 					--colors "#6BAED6" "#EE6A50" "#66C2A4" "#E9967A" "#999999" \
 					--legendLocation "upper-left" \
-					-out {outfile}
+					-out {outfile} \
+					--outFileNameData {data_outfile}
 	'''.format(**locals())
 					# --numPlotsPerRow 4 \
 					# --colorMap Reds \
@@ -1077,7 +1079,7 @@ def plotTssProfile(infiles, outfile):
 					# --zMax 60 30 80 120 150 50 60 \
 
 	# Run
-	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=5, print_cmd=False, ow=True, run_locally=True)
+	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=5, print_cmd=False, ow=True, run_locally=False)
 
 	# # Command
 	# cmd_str = ''' plotProfile -m {infile} \
@@ -1100,7 +1102,7 @@ def plotTssProfile(infiles, outfile):
 def splitJobs():
 	for organism, reference_info in reference_dict.items():
 		infiles = list(reference_info.values())
-		outfile = 'arion/atacseq/summary_plots.dir/evolutionary_conservation/{organism}/gtf/Known.gtf'.format(**locals())
+		outfile = 'arion/atacseq/summary_plots.dir/evolutionary_conservation_background/{organism}/gtf/Known.gtf'.format(**locals())
 		yield [infiles, outfile]
 
 @files(splitJobs)
@@ -1108,7 +1110,19 @@ def splitJobs():
 def splitPhyloGTF(infiles, outfile):
 
 	# Run
-	run_r_job('split_gtf', infiles, outfile, run_locally=True)#conda_env='env', modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+	run_r_job('split_gtf', infiles, outfile, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 1.1.1 Merge shuffled bed
+#############################################
+
+@merge((reference_dict['human']['filtered_gtf'], 'arion/isoseq/s09-evolutionary_conservation.dir/human/bed_shuffled/intergenic/exon/*-exon-shuffled1-intergenic.bed'),
+	   'arion/atacseq/summary_plots.dir/evolutionary_conservation_background/human/gtf/Shuffled.gtf')
+
+def createShuffledGTF(infiles, outfile):
+
+	# Run
+	run_r_job('create_shuffled_gtf', infiles, outfile, conda_env='env')
 
 #############################################
 ########## 1.2 Matrix
@@ -1118,14 +1132,14 @@ def splitPhyloGTF(infiles, outfile):
 
 @collate('arion/datasets/evolutionary_conservation/human/*.bw',
 		 regex(r'.*/evolutionary_conservation/(.*)/(.*).bw'),
-		 add_inputs(r'arion/atacseq/summary_plots.dir/evolutionary_conservation/\1/gtf/*.gtf'),
-		 r'arion/atacseq/summary_plots.dir/evolutionary_conservation/\1/matrix/\1-\2-matrix.gz')
+		 add_inputs(r'arion/atacseq/summary_plots.dir/evolutionary_conservation_background/\1/gtf/*.gtf'),
+		 r'arion/atacseq/summary_plots.dir/evolutionary_conservation_background/\1/matrix/\1-\2-matrix.gz')
 
 def computePhyloMatrix(infiles, outfile):
 
 	# Get order
 	order_dict = {
-		'gtf': {'Known': 1, 'NIC': 2, 'NNC': 3, 'Antisense': 4, 'Intergenic': 5}
+		'gtf': {'Known': 1, 'NIC': 2, 'NNC': 3, 'Antisense': 4, 'Intergenic': 5, 'Shuffled': 0}
 	}
 
 	# Split
@@ -1183,6 +1197,7 @@ def plotPhyloProfile(infile, outfile):
 
 	# Get algorithm
 	score = 'PhyloP' if 'phyloP' in outfile else 'PhastCons'
+	data_outfile = outfile.replace('.png', '.txt')
 
 	# Command
 	cmd_str = ''' plotProfile -m {infile} \
@@ -1191,9 +1206,10 @@ def plotPhyloProfile(infile, outfile):
 		--plotWidth 13 \
 		--yAxisLabel "Conservation score ({score})" \
 		--samplesLabel "" \
-		--colors "#6BAED6" "#78C679" "#EE6A50" "#66C2A4" "#E9967A"\
-		-out {outfile}
+		--colors "#dbdbdb" "#6BAED6" "#78C679" "#EE6A50" "#66C2A4" "#E9967A" \
+		-out {outfile} \
 	'''.format(**locals())
+		# --outFileNameData {data_outfile}
 		# --plotTitle "Human isoform conservation" \
 
 	# Run

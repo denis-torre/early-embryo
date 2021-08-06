@@ -85,7 +85,7 @@ get_size_factors <- function(infile, outfile) {
 
 #######################################################
 #######################################################
-########## S5. TSS coverage
+########## S6. TSS coverage
 #######################################################
 #######################################################
 
@@ -240,38 +240,6 @@ split_gtf <- function(infiles, outfile) {
         rtracklayer::export(gtf_split[[transcript_class]], gtf_outfile, format='gtf') # %>% head(5000)
         
     }
-
-}
-
-#############################################
-########## 1.1.1 Merge shuffled bed
-#############################################
-
-create_shuffled_gtf <- function(infiles, outfile) {
-
-    # Get filtered transcripts
-    gtf <- rtracklayer::readGFF(infiles[1])
-
-    # Get filtered transcripts
-    transcript_ids <- gtf %>% pull(transcript_id) %>% unique
-
-    # Read bed
-    exon_gtf <- lapply(infiles[2:length(infiles)], function(x) {
-        fread(x, col.names = c('seqid', 'start', 'end', 'exon_id', 'score', 'strand')) %>% mutate(start=start+1, transcript_id=gsub('(.*)_exon.*?-(.*)', '\\1-\\2', exon_id), seqid=gsub('chr', '', seqid)) %>% select(-exon_id) %>% mutate(type='exon')
-    }) %>% bind_rows
-
-    # Get transcript gtf
-    transcript_gtf <- exon_gtf %>% group_by(seqid, score, strand, transcript_id) %>% summarize(start=min(start), end=max(end)) %>% select(seqid, start, end, score, strand, transcript_id) %>% mutate(type='transcript')
-
-    # Merge
-    shuffled_gtf <- rbind(transcript_gtf, exon_gtf) %>% arrange(seqid, transcript_id, start, strand) %>% mutate(source_transcript_id=gsub('(.*?)-.*', '\\1', transcript_id)) %>% filter(source_transcript_id %in% transcript_ids)# %>% select(-transcript_id)
-
-    # Result
-    result_gtf <- gtf %>% rename('source_transcript_id'='transcript_id') %>% select(gene_id, source_transcript_id, gene_name, gene_status, talon_gene, transcript_status, transcript_name, talon_transcript) %>% distinct %>%
-        inner_join(shuffled_gtf, by='source_transcript_id') %>% select(-source_transcript_id)
-
-    # Export
-    rtracklayer::export(result_gtf, outfile, format='gtf')
 
 }
 
