@@ -706,7 +706,7 @@ def buildStarIndex(infiles, outfile):
 	cmd_str = '''STAR --runMode genomeGenerate --genomeDir {outfile} --genomeFastaFiles {infiles[1]} --sjdbGTFfile {infiles[0]} --runThreadN 100 --outFileNamePrefix {outfile}'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=False, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-3:]), wait=False)
+	run_job(cmd_str, outfile, modules=['star/2.7.5b'], W='02:00', GB=5, n=15, ow=True, print_cmd=True, stdout=os.path.join(outfile, 'job.log'), jobname='_'.join(outfile.split('/')[-3:]), wait=False)
 
 #############################################
 ########## 3. RSEM index
@@ -727,7 +727,7 @@ def buildRsemIndex(infiles, outfile):
 	cmd_str = ''' rsem-prepare-reference --gtf {infiles[0]} --num-threads 10 {infiles[1]} {basename} '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=False, stdout=basename+'.log', stderr=basename+'.err')
+	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=True, stdout=basename+'.log', stderr=basename+'.err')
 
 #############################################
 ########## 4. STAR first pass
@@ -788,7 +788,7 @@ def primateStarJobs():
 			outfile = 'arion/geo_illumina/s05-primates.dir/{organism}/STAR/pass2/{sample_name}/{sample_name}-Aligned.sortedByCoord.out.bam'.format(**locals())
 			yield [[fastq_pair, star_index, sj_files], outfile]
 
-@follows(buildStarIndex)
+@follows(buildStarIndex, getPrimateStarJunctions)
 
 @files(primateStarJobs)
 
@@ -815,7 +815,7 @@ def runPrimateStar(infiles, outfile):
 		--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
+	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=True, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
 
 # find arion/geo_illumina/s05-primates.dir/*/STAR/pass2 -name "*.log" | jsc
 
@@ -823,7 +823,7 @@ def runPrimateStar(infiles, outfile):
 ########## 6. RSEM expression
 #############################################
 
-# @follows(runPrimateStar)
+@follows(runPrimateStar)
 
 @transform('arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
 		   regex(r'(.*)/STAR/.*/(.*)-Aligned.toTranscriptome.out.bam'),
@@ -902,7 +902,8 @@ def aggregatePrimateCounts(infiles, outfile):
 #############################################
 
 # @transform(runPrimateStar,
-@transform('arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
+# @transform('arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
+@transform('arion/geo_illumina/s05-primates.dir/marmoset/STAR/pass2/*/*_1_*-Aligned.sortedByCoord.out.bam',
 		   suffix('-Aligned.sortedByCoord.out.bam'),
 		   '.bw')
 
