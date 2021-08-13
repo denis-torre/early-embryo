@@ -145,6 +145,33 @@ copy_lifted_gtf <- function(infile, outfile) {
 
 #######################################################
 #######################################################
+########## S5. Sashimi
+#######################################################
+#######################################################
+
+#############################################
+########## 3. Novel primate genes
+#############################################
+
+get_novel_primate_genes <- function(infiles, outfile) {
+
+    # Library
+    require(DESeq2)
+    
+    # Get average expression
+    expression_dataframe <- lapply(infiles, function(x) {
+        load(x)
+        dds <- estimateSizeFactors(dds_list[['gene']])
+        average_dataframe <- counts(dds, normalized=TRUE) %>% rowMeans %>% as.data.frame %>% rownames_to_column('gene_id') %>% dplyr::rename('expression'='.') %>% mutate(organism=gsub('.*/(.*)-counts.rda', '\\1', x))
+    }) %>% bind_rows %>% pivot_wider(id_cols = gene_id, names_from = organism, values_from = expression) %>% filter(grepl('TALON', gene_id))
+
+    # Write
+    fwrite(expression_dataframe, file=outfile, sep='\t')
+
+}
+
+#######################################################
+#######################################################
 ########## S. 
 #######################################################
 #######################################################

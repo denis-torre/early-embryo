@@ -30,8 +30,8 @@ import lsf
 # 2.2 Default parameters
 r_source = 'pipeline/scripts/geo-illumina.R'
 py_source = 'pipeline/scripts/GeoIllumina.py'
-P = 'acc_GuccioneLab'
-q = 'express'
+P = 'acc_apollo'
+q = 'sla'
 W = '00:30'
 GB = 5
 n = 1
@@ -84,13 +84,15 @@ human_junction_file = 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_
 nonhuman_genomes = {
 	'macaque': {
 		'gtf': 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.102.gtf',
-		'gtf_lifted': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered.gtf',
-		'genome_fasta': 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.dna_sm.primary_assembly.fa'
+		'gtf_lifted': 'arion/geo_illumina/s05-primates.dir/macaque/gtf/macaque-hg38_filtered_lifted.gtf',
+		'genome_fasta': 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.dna_sm.primary_assembly.fa',
+		'sashimi_bams': 'arion/geo_illumina/summary.dir/sashimi/settings/macaque-bams.txt'
 	},
 	'marmoset': {
 		'gtf': 'arion/datasets/reference_genomes/marmoset/ncbiRefSeq.gtf',
-		'gtf_lifted': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToCalJac4/Homo_sapiens.GRCh38.102_talon.cds-hg38ToCalJac_filtered.gtf',
-		'genome_fasta': 'arion/datasets/reference_genomes/marmoset/calJac4.fa'
+		'gtf_lifted': 'arion/geo_illumina/s05-primates.dir/marmoset/gtf/marmoset-hg38_filtered_lifted.gtf',
+		'genome_fasta': 'arion/datasets/reference_genomes/marmoset/calJac4.fa',
+		'sashimi_bams': 'arion/geo_illumina/summary.dir/sashimi/settings/marmoset-bams_subset.txt'
 	}
 }
 # macaque_gtf = 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.102.gtf'
@@ -662,6 +664,62 @@ def makeBamTables(infiles, outfile):
 # 	# Run
 # 	run_py_job('ggsashimi', infile, outfile, W="00:10", GB=30, n=1, run_locally=False, conda_env='env')
 
+#############################################
+########## 3. Novel primate genes
+#############################################
+
+@collate('arion/geo_illumina/s05-primates.dir-old/*/RSEM/counts/*-counts.rda',
+		 regex(r'(.*)/s05.*.rda'),
+		 r'\1/summary.dir/sashimi-novel/primate-novel_genes.tsv')
+
+def getNovelPrimateGenes(infiles, outfile):
+
+	# Run
+	run_r_job('get_novel_primate_genes', infiles, outfile, conda_env='env')
+
+#############################################
+########## 4. Novel primate sashimi
+#############################################
+
+def novelGeneJobs():
+	gene_dataframe = pd.read_table('arion/geo_illumina/summary.dir/sashimi-novel/primate-novel_genes.tsv')
+	gene_ids = gene_dataframe.query('macaque > 3 and marmoset > 3')['gene_id']#[:10]
+	sashimi_genomes = nonhuman_genomes.copy()
+	sashimi_genomes['human'] = {'gtf': 'arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf', 'sashimi_bams':'arion/geo_illumina/summary.dir/sashimi/settings/all-bams.txt'}
+	for gene_id in gene_ids:
+		for organism, parameter_dict in sashimi_genomes.items():
+			if 'gtf_lifted' in parameter_dict.keys():
+				parameter_dict['gtf'] = parameter_dict['gtf_lifted']
+			infiles = [parameter_dict['gtf'], parameter_dict['sashimi_bams']]
+			outfile = 'arion/geo_illumina/summary.dir/sashimi-novel/plots/split/{organism}-{gene_id}.png'.format(**locals())
+			yield [infiles, outfile, gene_id]
+
+# @follows(getNovelPrimateGenes)
+
+@files(novelGeneJobs)
+
+def novelPrimateGeneSashimi(infiles, outfile, gene_id):
+
+	# Plot parameters
+	plot_prefix, plot_format = outfile.rsplit('.', 1)
+
+	# Command
+	cmd_str = ''' /sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-gene_id/ggsashimi.py \
+		--bam {infiles[1]} \
+		--gtf {infiles[0]} \
+		--gene_id {gene_id} \
+		--min-coverage 1000 \
+		--overlay 3 \
+		--fix-y-scale \
+		--aggr mean_j \
+		--out-prefix {plot_prefix} \
+		--out-format {plot_format}
+	'''.format(**locals())
+
+	# Run
+	# if 'marmoset' in outfile:
+	run_job(cmd_str, outfile, conda_env='env', modules=['samtools/1.9'], W='03:00', GB=25, n=1, print_cmd=False)#, print_cmd=False)
+
 #######################################################
 #######################################################
 ########## S5. Primate analysis
@@ -674,8 +732,8 @@ def makeBamTables(infiles, outfile):
 
 def gtfJobs():
 	gtf_dict = {
-		'macaque': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered.gtf',
-		'marmoset': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToCalJac4/Homo_sapiens.GRCh38.102_talon.cds-hg38ToCalJac_filtered.gtf'
+		'macaque': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered-gene_id.gtf',
+		'marmoset': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToCalJac4/Homo_sapiens.GRCh38.102_talon.cds-hg38ToCalJac_filtered-gene_id.gtf'
 	}
 	for organism, infile in gtf_dict.items():
 		outfile = 'arion/geo_illumina/s05-primates.dir/{organism}/gtf/{organism}-hg38_filtered_lifted.gtf'.format(**locals())
@@ -727,7 +785,7 @@ def buildRsemIndex(infiles, outfile):
 	cmd_str = ''' rsem-prepare-reference --gtf {infiles[0]} --num-threads 10 {infiles[1]} {basename} '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=True, stdout=basename+'.log', stderr=basename+'.err')
+	run_job(cmd_str, outfile, W="00:30", GB=5, n=3, modules=['rsem/1.3.3'], print_cmd=False, stdout=basename+'.log', stderr=basename+'.err')
 
 #############################################
 ########## 4. STAR first pass
@@ -815,7 +873,7 @@ def runPrimateStar(infiles, outfile):
 		--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=True, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
+	run_job(cmd_str, outfile, W="02:00", GB=10, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=True, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
 
 # find arion/geo_illumina/s05-primates.dir/*/STAR/pass2 -name "*.log" | jsc
 
@@ -823,7 +881,7 @@ def runPrimateStar(infiles, outfile):
 ########## 6. RSEM expression
 #############################################
 
-@follows(runPrimateStar)
+# @follows(runPrimateStar)
 
 @transform('arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
 		   regex(r'(.*)/STAR/.*/(.*)-Aligned.toTranscriptome.out.bam'),
@@ -855,7 +913,7 @@ def runPrimateRsem(infiles, outfile):
 		rsem-plot-model {prefix} {prefix}.quant.pdf '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="02:00", GB=2, n=25, modules=['rsem/1.3.3'], print_outfile=False, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
+	run_job(cmd_str, outfile, W="02:00", GB=2, n=25, modules=['rsem/1.3.3'], print_outfile=True, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
 #############################################
 ########## 7. Prepare metadata
@@ -886,8 +944,8 @@ def preparePrimateSampleMetadata(infiles, outfile):
 ########## 8. Aggregate
 #############################################
 
-# @transform(preparePrimateSampleMetadata,
-@transform('arion/geo_illumina/s05-primates.dir/*/RSEM/counts/*-sample_metadata.tsv',
+@transform(preparePrimateSampleMetadata,
+# @transform('arion/geo_illumina/s05-primates.dir/*/RSEM/counts/*-sample_metadata.tsv',
 		   suffix('-sample_metadata.tsv'),
 		   add_inputs(human_filtered_gtf),
 		   '-counts.rda')
