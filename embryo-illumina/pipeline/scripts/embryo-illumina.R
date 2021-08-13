@@ -424,21 +424,32 @@ run_repeat_enrichment <- function(infiles, outfile) {
 pick_soft_thresholds <- function(infile, outfile) {
 
     # Library
+    require(DESeq2)
     require(WGCNA)
 
-    # Counts
-    normalized_count_dataframe <- fread(infile) %>% filter(grepl('ENS', gene_id)) %>% column_to_rownames('gene_id')
-
-    # Remove genes with low counts and low variance
-    gene_counts <- apply(normalized_count_dataframe, 1, sum)
-    gene_var <- apply(normalized_count_dataframe, 1, var)
-    statistic_dataframe <- cbind(gene_counts, gene_var) %>% as.data.frame %>% rownames_to_column('gene_id')
-
-    # Filter genes
-    good_genes <- statistic_dataframe %>% filter(gene_counts > 15 & gene_var > 0.5) %>% pull(gene_id)
+    # Load
+    load(infile)
     
+    # Get dds
+    dds <- estimateSizeFactors(dds_list[['gene']])
+
+    # Get counts
+    count_dataframe <- counts(dds, normalized=FALSE)
+
+    # Get gene counts
+    gene_counts <- apply(count_dataframe, 1, sum)
+    
+    # Filter genes
+    good_genes <- names(gene_counts)[gene_counts > 10]
+
+    # Subset
+    dds_subset <- dds[good_genes,]
+    
+    # Get expression
+    expression_dataframe <- counts(dds_subset, normalized=TRUE)
+
     # Filter expression
-    log1p_dataframe <- log10(normalized_count_dataframe[good_genes,]+1) %>% t
+    log1p_dataframe <- log10(expression_dataframe[good_genes,]+1) %>% t
 
     # Pick soft threshold
     powers <- 1:20
@@ -462,11 +473,11 @@ cluster_genes <- function(infile, outfile) {
     load(infile)
 
     # Get adjacency
-    adjacency <- adjacency(log1p_dataframe, power = 10, type='signed')
+    adjacency <- adjacency(log1p_dataframe, power = 13, type='signed')
 
     # Turn adjacency into topological overlap
     TOM <- TOMsimilarity(adjacency, TOMType = "signed");
-    dissTOM <- 1-TOM # ???
+    dissTOM <- 1-TOM # ??? correct, between 1 and 0 even for signed
     rownames(dissTOM) <- colnames(log1p_dataframe)
     colnames(dissTOM) <- colnames(log1p_dataframe)
 
@@ -502,7 +513,7 @@ get_gene_modules <- function(infiles, outfile) {
     METree <- hclust(as.dist(MEDiss), method = "average")
 
     # Merge eigengenes
-    MEDissThres <- 0.01
+    MEDissThres <- 0.05
     merge <- mergeCloseModules(log1p_dataframe, initial_module_colors, cutHeight = MEDissThres, verbose = 3)
     colorOrder <- c("grey", standardColors(50));
     merged_module_colors <- merge$colors
@@ -563,44 +574,102 @@ run_module_enrichment <- function(infile, outfile) {
 }
 
 #############################################
-########## 5. Get module correlations
+########## 5. Get module preservation
 #############################################
 
-get_module_correlations <- function(infiles, outfile) {
+get_module_preservation <- function(infiles, outfile) {
 
-    # Load
+    # Library
+    suppressPackageStartupMessages(require(WGCNA))
+    suppressPackageStartupMessages(require(DESeq2))
+    
+    # Load data
     load(infiles[1])
+    load(infiles[2])
+    load(infiles[3])
 
-    # Read expression
-    normalized_count_dataframe <- fread(infiles[2]) %>% filter(grepl('TALON', gene_id)) %>% column_to_rownames('gene_id') %>% as.matrix
+    # Get size factors
+    dds <- estimateSizeFactors(dds_list[['gene']])
 
-    # Normalize expression
-    log1p_matrix <- log10(normalized_count_dataframe+1)
+    # Get expression
+    test_log1p_dataframe <- log10(counts(dds, normalized=TRUE)+1) %>% t
 
-    # Get eigengenes
-    eigengene_matrix <- me_dataframe %>% column_to_rownames('sample_name') %>% as.matrix %>% t
+    # Remove genes with no variance in test dataset
+    gene_variance <- apply(test_log1p_dataframe, 2, var)
+    variable_genes <- names(gene_variance)[gene_variance > 0]
 
-    # Get common samples
-    common_samples <- intersect(colnames(log1p_matrix), colnames(eigengene_matrix))
-    log1p_matrix <- log1p_matrix[,common_samples]
-    eigengene_matrix <- eigengene_matrix[,common_samples]
+    # Intersect with network expression data
+    filtered_genes <- intersect(colnames(log1p_dataframe), variable_genes)
 
-    # Correlate
-    correlation_results <- list()
-    for (i in 1:nrow(log1p_matrix)) {
-        for (j in 1:nrow(eigengene_matrix)) {
-            spearman_results <- suppressWarnings(cor.test(log1p_matrix[i,], eigengene_matrix[j,], method='spearman'))
-            correlation_results[[length(correlation_results)+1]] <- data.frame(gene_id=rownames(log1p_matrix)[i], module_name=rownames(eigengene_matrix)[j], rho=spearman_results$estimate[[1]], pvalue=spearman_results$p.value)
-        }
-    }
+    # Get matching colors
+    modules <- module_dataframe %>% pull(module_name, gene_id) 
+    filtered_modules <- modules[filtered_genes]
 
-    # Merge
-    correlation_dataframe <- correlation_results %>% bind_rows %>% arrange(pvalue)
+    # Create expression list
+    multiExpr <- list(
+        'network_data' = list('data' = log1p_dataframe[,filtered_genes]),
+        'test_data' = list('data' = test_log1p_dataframe[,filtered_genes])
+    )
 
-    # Write
-    fwrite(correlation_dataframe, file=outfile, sep='\t')
+    # Enable threads
+    enableWGCNAThreads(10)
+
+    # Get preservation
+    module_preservation <- modulePreservation(
+        multiData = multiExpr,
+        multiColor = list('network_data'=filtered_modules),
+        referenceNetworks = 1,
+        networkType = 'signed',
+        maxModuleSize = 1000,
+        nPermutations = 1000,
+        parallelCalculation = TRUE,
+        verbose = 3
+    )
+
+    # Save
+    save(module_preservation, file=outfile)
 
 }
+
+# #############################################
+# ########## 5. Get module correlations
+# #############################################
+
+# get_module_correlations <- function(infiles, outfile) {
+
+#     # Load
+#     load(infiles[1])
+
+#     # Read expression
+#     normalized_count_dataframe <- fread(infiles[2]) %>% filter(grepl('TALON', gene_id)) %>% column_to_rownames('gene_id') %>% as.matrix
+
+#     # Normalize expression
+#     log1p_matrix <- log10(normalized_count_dataframe+1)
+
+#     # Get eigengenes
+#     eigengene_matrix <- me_dataframe %>% column_to_rownames('sample_name') %>% as.matrix %>% t
+
+#     # Get common samples
+#     common_samples <- intersect(colnames(log1p_matrix), colnames(eigengene_matrix))
+#     log1p_matrix <- log1p_matrix[,common_samples]
+#     eigengene_matrix <- eigengene_matrix[,common_samples]
+
+#     # Correlate
+#     correlation_results <- list()
+#     for (i in 1:nrow(log1p_matrix)) {
+#         for (j in 1:nrow(eigengene_matrix)) {
+#             spearman_results <- suppressWarnings(cor.test(log1p_matrix[i,], eigengene_matrix[j,], method='spearman'))
+#             correlation_results[[length(correlation_results)+1]] <- data.frame(gene_id=rownames(log1p_matrix)[i], module_name=rownames(eigengene_matrix)[j], rho=spearman_results$estimate[[1]], pvalue=spearman_results$p.value)
+#         }
+#     }
+
+#     # Merge
+#     correlation_dataframe <- correlation_results %>% bind_rows %>% arrange(pvalue)
+
+#     # Write
+#     fwrite(correlation_dataframe, file=outfile, sep='\t')
+
+# }
 
 #######################################################
 #######################################################

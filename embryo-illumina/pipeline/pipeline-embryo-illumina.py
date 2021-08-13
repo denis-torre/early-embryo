@@ -840,8 +840,9 @@ def runRepeatEnrichment(infiles, outfile):
 
 # @follows(getGeneExpression)
 
-@transform('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv',
-		   regex(r'(.*)/s05-expression.dir/(.*)/all/.*.tsv'),
+# @transform('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv',
+@transform('arion/illumina/s05-expression.dir/human/all/human_all-counts.rda',
+		   regex(r'(.*)/s05-expression.dir/(.*)/all/.*.rda'),
 		   r'\1/s08-wgcna.dir/\2/network/\2-soft_thresholds_signed.rda')
 
 def pickSoftThresholds(infile, outfile):
@@ -893,23 +894,33 @@ def getGeneModules(infiles, outfile):
 def runModuleEnrichment(infiles, outfile):
 
 	# Run
-	run_r_job('run_module_enrichment', infiles, outfile, run_locally=True)#, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+	run_r_job('run_module_enrichment', infiles, outfile, run_locally=True)# conda env, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
 #############################################
-########## 5. Get module correlations
+########## 5. Get module preservation
 #############################################
 
 # @follows(getGeneExpression)
 
-@transform(getGeneModules,
-		   suffix('s.rda'),
-		   add_inputs('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv'),
-		   '_correlation.tsv')
+@transform(('arion/geo_illumina/s04-expression.dir/*/*-counts.rda', 'arion/geo_illumina/s05-primates.dir-old/*/RSEM/counts/*-counts.rda'),
+		   regex(r'.*/(.*)-counts.rda'),
+		   add_inputs(pickSoftThresholds, getGeneModules),
+		   r'arion/illumina/s08-wgcna.dir/human/module_preservation/\1-module_preservation.rda')
 
-def getModuleCorrelations(infiles, outfile):
+def getModulePreservation(infiles, outfile):
 
 	# Run
-	run_r_job('get_module_correlations', infiles, outfile, modules=['R/4.0.3'], stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+	run_r_job('get_module_preservation', infiles, outfile, W='02:00', GB=10, n=5, modules=['R/4.0.3'], stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+# @transform(getGeneModules,
+# 		   suffix('s.rda'),
+# 		   add_inputs('arion/illumina/s05-expression.dir/human/all/human_all-gene_normalized_counts.tsv'),
+# 		   '_correlation.tsv')
+
+# def getModuleCorrelations(infiles, outfile):
+
+# 	# Run
+# 	run_r_job('get_module_correlations', infiles, outfile, modules=['R/4.0.3'], stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
 #######################################################
 #######################################################
