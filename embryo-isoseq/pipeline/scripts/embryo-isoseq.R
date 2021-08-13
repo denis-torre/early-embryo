@@ -649,6 +649,25 @@ filter_genepred <- function(infiles, outfile) {
     fwrite(result_dataframe, file=outfile, sep='\t', col.names = FALSE)
 }
 
+#############################################
+########## 6. Add gene ID
+#############################################
+
+add_gene_id <- function(infiles, outfile) {
+
+    # Read GTF
+    lifted_gtf <- rtracklayer::readGFF(infiles[1]) %>% mutate(source=basename(as.character(source)))
+
+    # Transcript dataframe
+    transcript_dataframe <- rtracklayer::readGFF(infiles[2]) %>% select(gene_id, transcript_id) %>% distinct
+
+    # Merge
+    merged_gtf <- lifted_gtf %>% select(-gene_id) %>% left_join(transcript_dataframe, by='transcript_id')
+
+    # Write
+    rtracklayer::export(merged_gtf, outfile, format='gtf')
+}
+
 #######################################################
 #######################################################
 ########## Summary

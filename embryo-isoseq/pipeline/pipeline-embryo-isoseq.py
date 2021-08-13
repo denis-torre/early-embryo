@@ -1386,6 +1386,20 @@ def convertLiftOver(infile, outfile):
 
 # du -hs /hpc/users/torred23/pipelines/projects/early-embryo/arion/isoseq/s10-liftover.dir/*/merged/*.gtf
 
+#############################################
+########## 6. Add gene ID
+#############################################
+
+@transform(convertLiftOver,
+		   regex(r'(.*)/(.*)/(merged)/(.*).gtf'),
+		   add_inputs(r'arion/illumina/s04-alignment.dir/\2/all/gtf/*-all-SJ_filtered.gtf'),
+		    r'\1/\2/\3/\4-gene_id.gtf')
+
+def addGeneId(infiles, outfile):
+
+	# Run
+	run_r_job('add_gene_id', infiles, outfile, conda_env='env', W='00:05', GB=10, n=1, run_locally=False)#, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
+
 #######################################################
 #######################################################
 ########## Summary
