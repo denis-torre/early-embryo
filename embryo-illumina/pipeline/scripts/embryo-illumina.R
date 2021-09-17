@@ -234,6 +234,35 @@ get_gene_expression <- function(infile, outfile) {
 
 }
 
+#############################################
+########## 5. Get size factors
+#############################################
+
+get_size_factors <- function(infile, outfile) {
+    
+    # Library
+    suppressPackageStartupMessages(require(DESeq2))
+
+    # Load
+    load(infile)
+
+    # Get counts
+    count_matrix <- counts(dds_list[['gene']])
+
+    # Get factors
+    normalization_factors <- edgeR::calcNormFactors(object = count_matrix, method = "TMM")
+
+    # Get library sizes
+    library_sizes <- colSums(count_matrix)
+
+    # Get dataframe
+    normalization_dataframe <- data.frame(normalization_factor=normalization_factors, library_size=library_sizes) %>% rownames_to_column('sample_name') %>% mutate(size_factor=normalization_factor*library_size/1000000, size_factor_reciprocal=1/size_factor)
+
+    # Write
+    fwrite(normalization_dataframe, file=outfile, sep='\t')
+
+}
+
 #######################################################
 #######################################################
 ########## S5. Differential expression
@@ -628,6 +657,94 @@ get_module_preservation <- function(infiles, outfile) {
 
     # Save
     save(module_preservation, file=outfile)
+
+}
+
+#############################################
+########## 6. Get gene connectivity
+#############################################
+
+get_module_membership <- function(infiles, outfile) {
+    
+    # Library
+    require(WGCNA)
+
+    # Load
+    load(infiles[1])
+    load(infiles[2])
+    load(infiles[3])
+
+    # Get module membership
+    membership_dataframe <- signedKME(log1p_dataframe,  me_dataframe %>% column_to_rownames('sample_name'))#, corOptions="use = 'p', method = 'spearman'")
+
+    # Get connectivity
+    module_assignments <- module_dataframe %>% pull(module_name, gene_id)
+    connectivity_dataframe <- intramodularConnectivity(adjacency, module_assignments[colnames(adjacency)])
+
+    # Save
+    save(membership_dataframe, connectivity_dataframe, file=outfile)
+
+}
+
+#############################################
+########## 7. Get gene networks
+#############################################
+
+get_gene_networks <- function(infiles, outfile) {
+    
+    # Load
+    load(infiles[1])
+    load(infiles[2])
+    load(infiles[3])
+
+    # Get gene symbol
+    name_dataframe <- rtracklayer::readGFF(infiles[4]) %>% select(gene_id, gene_name) %>% distinct
+
+    # Read genes
+    developmental_dataframe <- fread(infiles[5], header=TRUE)
+
+    # Sort
+    colnames(membership_dataframe) <- gsub('kME', 'mo', colnames(membership_dataframe))
+    gene_dataframe <- membership_dataframe %>% rownames_to_column('gene_id') %>% pivot_longer(-gene_id, names_to = 'module_name', values_to = 'module_membership') %>% inner_join(module_dataframe, by=c('gene_id', 'module_name'))
+    id2symbol <- name_dataframe %>% pull(gene_name, gene_id)
+
+    # # Top N genes by connectivity
+    selected_modules <- paste0('module_', c(2,6,3,8,13,32,40))
+    # nr_genes <- as.numeric(gsub('.*top(.*?)/.*', '\\1', outfile))
+    # top_dataframe <- gene_dataframe %>% group_by(module_name) %>% slice_max(order_by = module_membership, n=nr_genes) %>% filter(module_name %in% selected_modules)
+    
+    # Select top 3 novel genes per cluster
+    novel_dataframe <- gene_dataframe %>% filter(grepl('TALON', gene_id)) %>% group_by(module_name) %>% slice_max(order_by = module_membership, n = 3) %>% filter(module_name %in% selected_modules)
+
+    # Select 10 known genes per cluster, prioritizing developmental ones
+    known_dataframe <- gene_dataframe %>% filter(grepl('ENS', gene_id)) %>% mutate(gene_symbol=id2symbol[gene_id], developmental=ifelse(gene_symbol %in% developmental_dataframe$Gene_Symbol, 100, 1)) %>% group_by(module_name) %>% 
+        slice_max(order_by = developmental*module_membership, n = 15) %>% filter(module_name %in% selected_modules) %>% arrange(module_name)
+
+    # Merge
+    top_dataframe <- rbind(novel_dataframe, known_dataframe) %>% select(-gene_symbol, -developmental)
+
+    # Split
+    gene_ids <- setNames(top_dataframe %>% group_split, top_dataframe %>% group_keys %>% pull(module_name)) %>% lapply(function(x) x %>% pull(gene_id))
+
+    # Get correlations
+    correlations <- lapply(gene_ids, function(x) {
+        correlation_matrix <- cor(log1p_dataframe[,x], method='spearman')
+        colnames(correlation_matrix) <- id2symbol[x]
+        rownames(correlation_matrix) <- id2symbol[x]
+        correlation_matrix[!upper.tri(correlation_matrix)] <- NA
+        edge_dataframe <- correlation_matrix %>% as.data.frame %>% rownames_to_column('source_gene_id') %>% pivot_longer(-source_gene_id, names_to = 'target_gene_id', values_to = 'correlation') %>% drop_na
+        colnames(edge_dataframe) <- gsub('_gene_id', '', colnames(edge_dataframe))
+        edge_dataframe
+    })
+                                                                                                                    
+    # Write edges
+    for (module_name in names(correlations)) {
+        module_outfile <- gsub('network-nodes', paste0(module_name, '-network'), outfile)
+        fwrite(correlations[[module_name]], file=module_outfile, sep='\t')
+    }
+
+    # Write nodes
+    fwrite(name_dataframe %>% filter(gene_id %in% do.call('c', gene_ids)) %>% rename('shared_name'='gene_id', 'name'='gene_name'), file=outfile, sep='\t')
 
 }
 
