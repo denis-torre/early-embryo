@@ -577,6 +577,22 @@ def createReferenceJson(infiles, outfile):
 	with open(outfile, 'w') as openfile:
 		json.dump(result_dict, openfile, indent=4)
 
+#############################################
+########## 3. Chromosome sizes
+#############################################	
+
+@transform(('arion/datasets/reference_genomes/*/*primary_assembly.fa', downloadMarmosetGenome),
+		   suffix('.fa'),
+		   '.chrom.sizes')
+
+def getChromSizes(infile, outfile):
+
+	# Command
+	cmd_str = ''' faidx {infile} -i chromsizes > {outfile} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, conda_env=False, modules=['python/3.7.3'], W='00:15', GB=10, n=1, print_outfile=False, print_cmd=False)
+
 #######################################################
 #######################################################
 ########## S3. Sample renaming
