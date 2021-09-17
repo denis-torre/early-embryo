@@ -449,7 +449,7 @@ def runStar(infiles, outfile):
 # ls arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*.err | xargs wc -l
 
 #############################################
-########## 4. Junction counts
+########## 3. Junction counts
 #############################################
 
 @follows(runStar)
@@ -471,7 +471,7 @@ def getJunctionCounts(infiles, outfile):
 # find arion/geo_illumina/s03-alignment.dir -name "*junction_counts*" | xargs rm
 
 #############################################
-########## 5. RSEM expression
+########## 4. RSEM expression
 #############################################
 
 # @follows(runStar)
@@ -515,20 +515,20 @@ def runRsem(infiles, outfile):
 # find arion/geo_illumina/s03-alignment.dir/*/RSEM -name "*.log" | grep -v 'rsem' | jsc
 
 #############################################
-########## 4. Create BigWig
+########## 6. Create BigWig
 #############################################
 
-@transform(runStar,
-		   suffix('-Aligned.sortedByCoord.out.bam'),
-		   '.bw')
+# @transform(runStar,
+# 		   suffix('-Aligned.sortedByCoord.out.bam'),
+# 		   '.bw')
 
-def createBigWig(infile, outfile):
+# def createBigWig(infile, outfile):
 
-	# Command
-	cmd_str = """bamCoverage --outFileFormat=bigwig --skipNonCoveredRegions --numberOfProcessors=50 --normalizeUsing RPKM -b {infile} -o {outfile}""".format(**locals())
+# 	# Command
+# 	cmd_str = """bamCoverage --outFileFormat=bigwig --skipNonCoveredRegions --numberOfProcessors=50 --normalizeUsing RPKM -b {infile} -o {outfile}""".format(**locals())
 
-	# Run
-	run_job(cmd_str, outfile, conda_env='env', W='05:00', n=7, GB=6)
+# 	# Run
+# 	run_job(cmd_str, outfile, conda_env='env', W='05:00', n=7, GB=6)
 
 #######################################################
 #######################################################
@@ -574,6 +574,42 @@ def aggregateCounts(infiles, outfile):
 
 	# Run
 	run_r_job('aggregate_counts', infiles, outfile, conda_env='env', run_locally=False, W='00:30', GB=30, n=1, wait=False, ow=True, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+#############################################
+########## 3. Get size factors
+#############################################
+
+@transform(('arion/geo_illumina/s04-expression.dir/*/*-counts.rda', 'arion/geo_illumina/s05-primates.dir/*/RSEM/counts/*-counts.rda'),
+		   suffix('-counts.rda'),
+		   '-size_factors.tsv')
+
+def getSizeFactors(infile, outfile):
+
+	# Run
+	run_r_job('get_size_factors', infile, outfile, conda_env='env', modules=[], W='00:15', GB=20, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 4. Create scaled BigWig
+#############################################
+
+@transform('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
+		   regex(r'(.*.dir)/(.*?)/(.*)-Aligned.sortedByCoord.out.bam'),
+		   add_inputs(r'arion/geo_illumina/s04-expression.dir/\2/\2-size_factors.tsv'),
+		   r'\1/\2/\3-scaled.bw')
+
+def createScaledBigWig(infiles, outfile):
+
+	# Read size factor
+	normalization_dict = pd.read_table(infiles[1], index_col='sample_name')['size_factor_reciprocal'].to_dict()
+	size_factor = normalization_dict[outfile.split('/')[-2]]
+
+	# Command
+	cmd_str = """bamCoverage --outFileFormat=bigwig --binSize=1 --skipNonCoveredRegions --numberOfProcessors=48 --scaleFactor {size_factor} -b {infiles[0]} -o {outfile}""".format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, conda_env='env', W='02:00', n=8, GB=4, print_outfile=False)
+
+# find arion/geo_illumina/s03-alignment.dir/liu/STAR/pass2 -name "*scaled.bw"
 
 #######################################################
 #######################################################
@@ -956,22 +992,43 @@ def aggregatePrimateCounts(infiles, outfile):
 	run_r_job('aggregate_counts', infiles, outfile, conda_env='env', run_locally=False, W='00:10', GB=15, n=1, wait=False, ow=True, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
 #############################################
+########## 9. Create scaled BigWig
+#############################################
+
+@transform('arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
+		   regex(r'(.*.dir)/(.*?)/(.*)-Aligned.sortedByCoord.out.bam'),
+		   add_inputs(r'arion/geo_illumina/s05-primates.dir/\2/RSEM/counts/\2-size_factors.tsv'),
+		   r'\1/\2/\3-scaled.bw')
+
+def createPrimateScaledBigWig(infiles, outfile):
+
+	# Read size factor
+	normalization_dict = pd.read_table(infiles[1], index_col='sample_name')['size_factor_reciprocal'].to_dict()
+	size_factor = normalization_dict[outfile.split('/')[-2]]
+
+	# Command
+	cmd_str = """bamCoverage --outFileFormat=bigwig --binSize=1 --skipNonCoveredRegions --numberOfProcessors=48 --scaleFactor {size_factor} -b {infiles[0]} -o {outfile}""".format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, conda_env='env', W='03:00', n=8, GB=4, print_cmd=False)
+
+#############################################
 ########## 9. Create BigWig
 #############################################
 
-# @transform(runPrimateStar,
-# @transform('arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
-@transform('arion/geo_illumina/s05-primates.dir/marmoset/STAR/pass2/*/*_1_*-Aligned.sortedByCoord.out.bam',
-		   suffix('-Aligned.sortedByCoord.out.bam'),
-		   '.bw')
+# # @transform(runPrimateStar,
+# # @transform('arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
+# @transform('arion/geo_illumina/s05-primates.dir/marmoset/STAR/pass2/*/*_1_*-Aligned.sortedByCoord.out.bam',
+# 		   suffix('-Aligned.sortedByCoord.out.bam'),
+# 		   '.bw')
 
-def createPrimateBigWig(infile, outfile):
+# def createPrimateBigWig(infile, outfile):
 
-	# Command
-	cmd_str = """bamCoverage --outFileFormat=bigwig --skipNonCoveredRegions --numberOfProcessors=50 --normalizeUsing RPKM -b {infile} -o {outfile}""".format(**locals())
+# 	# Command
+# 	cmd_str = """bamCoverage --outFileFormat=bigwig --skipNonCoveredRegions --numberOfProcessors=50 --normalizeUsing RPKM -b {infile} -o {outfile}""".format(**locals())
 
-	# Run
-	run_job(cmd_str, outfile, conda_env='env', W='03:00', n=5, GB=6)
+# 	# Run
+# 	run_job(cmd_str, outfile, conda_env='env', W='03:00', n=5, GB=6)
 
 #############################################
 ########## 7. Aggregate counts

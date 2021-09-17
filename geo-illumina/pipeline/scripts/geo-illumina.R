@@ -115,6 +115,35 @@ aggregate_counts <- function(infiles, outfile) {
 
 }
 
+#############################################
+########## 3. Get size factors
+#############################################
+
+get_size_factors <- function(infile, outfile) {
+    
+    # Library
+    suppressPackageStartupMessages(require(DESeq2))
+
+    # Load
+    load(infile)
+
+    # Get counts
+    count_matrix <- counts(dds_list[['gene']])
+
+    # Get factors
+    normalization_factors <- edgeR::calcNormFactors(object = count_matrix, method = "TMM")
+
+    # Get library sizes
+    library_sizes <- colSums(count_matrix)
+
+    # Get dataframe
+    normalization_dataframe <- data.frame(normalization_factor=normalization_factors, library_size=library_sizes) %>% rownames_to_column('sample_name') %>% mutate(size_factor=normalization_factor*library_size/1000000, size_factor_reciprocal=1/size_factor)
+
+    # Write
+    fwrite(normalization_dataframe, file=outfile, sep='\t')
+
+}
+
 #######################################################
 #######################################################
 ########## S5. Primate analysis
