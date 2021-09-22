@@ -169,9 +169,10 @@ def qiaoIllumina(infile, outfiles, outfileRoot):
 ########## 1. SRA
 #############################################
 
-@subdivide(('../arion/datasets/blakeley/blakeley-samples.csv', '../arion/datasets/xue/xue-samples.csv', '../arion/datasets/yan/yan-samples.csv', '../arion/datasets/deng/deng-samples.csv', '../arion/datasets/wang/wang-samples.csv'),
+# @subdivide(('../arion/datasets/blakeley/blakeley-samples.csv', '../arion/datasets/xue/xue-samples.csv', '../arion/datasets/yan/yan-samples.csv', '../arion/datasets/deng/deng-samples.csv', '../arion/datasets/wang/wang-samples.csv'),
+@subdivide(('../arion/datasets/guo/guo-samples.csv'),
 		   regex(r'(.*)/.*.csv'),
-		   r'\1/rawdata/*.fastq.gzA',
+		   r'\1/rawdata/*.fastq.gz',
 		   r'\1/rawdata/{run}*.fastq.gz')
 
 def downloadFASTQ(infile, outfiles, outfileRoot):
