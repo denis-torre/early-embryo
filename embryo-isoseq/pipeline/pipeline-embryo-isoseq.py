@@ -234,7 +234,7 @@ def flncToFastq(infile, outfile):
 	cmd_str = ''' samtools view {infile} | awk '{{printf("@%s\\n%s\\n+\\n%s\\n", $1, $10, $11)}}' | gzip > {outfile} '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, modules=['samtools/1.11'], W='01:00', GB=10, n=1, print_outfile=False, print_cmd=False)
+	run_job(cmd_str, outfile, modules=['samtools/1.11'], W='01:00', GB=10, n=1, print_outfile=True, print_cmd=False)
 
 #######################################################
 #######################################################
@@ -314,12 +314,32 @@ def filterSam(infile, outfile):
 	run_job(cmd_str, outfile, W='00:15', n=5, GB=1, modules=['samtools/1.9', 'sambamba/0.5.6'], print_cmd=False)
 
 #############################################
-########## 4. MultiQC
+########## 4. FastQC
 #############################################
 
-@transform('arion/isoseq/s02-alignment.dir',
-		   regex(r'(.*)/s..-(.*).dir'),
-		   r'\1/multiqc/\2/multiqc_report.html')
+@transform('arion/isoseq/s02-alignment.dir/fastq/*/*.flnc.fastq',
+		   regex(r'(.*)/fastq/(.*)/(.*).fastq'),
+		   r'\1/fastqc/\2/\3.fastqc.html')
+
+def runFastQC(infile, outfile):
+
+	# Command
+	cmd_str = '''fastqc --outdir=$(dirname {outfile}) {infile}'''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['fastqc/0.11.8'], W='03:00', GB=12, n=1, print_outfile=False)
+
+#############################################
+########## 5. MultiQC
+#############################################
+
+# @transform('arion/isoseq/s02-alignment.dir/',
+# 		   regex(r'(.*)/s..-(.*).dir'),
+# 		   r'\1/multiqc/\2/multiqc_report.html')
+
+@transform('arion/isoseq/s02-alignment.dir/fastqc/*',
+		   regex(r'(.*)/.*.dir/fastqc/(.*)'),
+		   r'\1/multiqc/fastqc/\2/multiqc_report.html')
 
 def runMultiQC(infile, outfile):
 
@@ -1399,6 +1419,157 @@ def addGeneId(infiles, outfile):
 
 	# Run
 	run_r_job('add_gene_id', infiles, outfile, conda_env='env', W='00:05', GB=10, n=1, run_locally=False)#, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
+
+#######################################################
+#######################################################
+########## S10. BLAST
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Download genomes
+#############################################
+
+def downloadGenomeJobs():
+	genomes = pd.read_table('arion/datasets/reference_genomes/ucsc-releases.tsv', comment='#')['genome']
+	for genome in genomes:
+		yield [None, 'arion/isoseq/s11-blast.dir/genomes/{genome}.fa.gz'.format(**locals())]
+
+@files(downloadGenomeJobs)
+
+def downloadBlastGenomes(infile, outfile):
+
+	# Create directory
+	outdir = os.path.dirname(outfile)
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+
+	# Get genome
+	genome = os.path.basename(outfile)[:-len('.fa.gz')]
+
+	# Get URL
+	url = 'https://hgdownload.soe.ucsc.edu/goldenPath/{genome}/bigZips/{genome}.fa.gz'.format(**locals())
+
+	# Download
+	os.system('cd {outdir} && wget {url}'.format(**locals()))
+
+#############################################
+########## 2. Rename genomes
+#############################################
+
+@transform(downloadBlastGenomes,
+		  suffix('.fa.gz'),
+		  '.renamed.fa.gz')
+
+def renameBlastGenomes(infile, outfile):
+
+	# Get genome
+	genome = os.path.basename(infile)[:-len('.fa.gz')]
+
+	# Command
+	cmd_str = ''' zcat {infile} | sed 's/>/>{genome}_/g' | gzip > {outfile} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, W='01:00', GB=10, n=1, print_outfile=True, print_cmd=False)
+
+#############################################
+########## 3. Create database
+#############################################
+
+@collate(renameBlastGenomes,
+		 regex(r'(.*)/genomes/.*.fa.gz'),
+		 r'\1/database/blast_genome_database.db.00.nhr')
+
+def makeBlastDatabase(infiles, outfile):
+
+	# Settings
+	basename = outfile.replace('.00.nhr', '')
+	merged_fasta = outfile.replace('.db.00.nhr', '.fasta')
+	infiles_str = ' '.join(infiles)
+
+	# Command
+	cmd_str = ''' zcat {infiles_str} > {merged_fasta} && makeblastdb -in {merged_fasta} -out {basename} -parse_seqids -dbtype nucl && rm {merged_fasta} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, print_cmd=True, modules=['blast/2.9.0+'], W='06:00', GB=30, n=1, stdout=outfile.replace('.db.00.nhr', '.log'), stderr=outfile.replace('.db.00.nhr', '.err'))
+
+#############################################
+########## 4. Split
+#############################################
+
+# @follows(getFASTA)
+
+# @subdivide('arion/isoseq/s05-talon.dir/*/*_talon.fasta',
+		#    regex(r'(.*)/s05-talon.dir/(.*)/(.*).fasta'),
+@subdivide('arion/illumina/s04-alignment.dir/human/all/RSEM/index/*.transcripts.fa',
+		   regex(r'arion/illumina/s04-alignment.dir/(.*)/all/RSEM/index/(.*).fa'),
+		   r'arion/isoseq/s11-blast.dir/results/\1/fasta/*.fa.*',
+		   r'arion/isoseq/s11-blast.dir/results/\1/fasta/\2.fa.1')
+
+def splitBlastFASTA(infile, outfiles, outfileRoot):
+
+	# Get number
+	N = 1000 if 'human' in outfileRoot else 100#outfileRoot.split('.')[-1]
+
+	# Get temp filename
+	outdir = os.path.dirname(outfileRoot)
+	tempfile = os.path.join(outdir, os.path.basename(infile))
+
+	# Command
+	cmd_str = ''' cp {infile} {outdir} && gt splitfasta -numfiles {N} {tempfile} && rm {tempfile} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfileRoot, modules=['genometools/1.5.9'], W='00:15', GB=10, n=1, jobname='splitFASTA_'+outfileRoot.split('/')[-3], stdout=os.path.join(os.path.dirname(outfileRoot), 'job.log'))
+
+#############################################
+########## 5. Run BLAST
+#############################################
+
+# @transform('/hpc/users/torred23/pipelines/projects/early-embryo/test.fasta',
+@transform('arion/isoseq/s11-blast.dir/results/human/fasta/*.fa.*',
+		   regex(r'(.*)/s11-blast.dir/results/(.*)/fasta/(.*)'),
+		   add_inputs(makeBlastDatabase),
+		   r'\1/s11-blast.dir/results/\2/split/\3.blast_results.tsv.gz')
+
+def runBLAST(infiles, outfile):
+
+	# Settings
+	outfile_tsv = outfile.replace('.gz', '')
+	db = infiles[1].replace('.00.nhr', '')
+
+	# Command
+	cmd_str = ''' blastn -query {infiles[0]} -db {db} -out {outfile_tsv} -task megablast -outfmt 6 -html -num_threads 1 -evalue 1 && gzip {outfile_tsv}'''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, print_outfile=False, modules=['blast/2.9.0+'], W='10:00', GB=150, n=1, stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
+
+# find arion/isoseq/s11-blast.dir/results/human/split -name "*.log" | jsc
+# find arion/isoseq/s11-blast.dir/results/human/split -name "*.log" | js | grep -v completed > errors.sh && chmod +x errors.sh
+
+#############################################
+########## 6. Filter BLAST
+#############################################
+
+@transform('arion/isoseq/s11-blast.dir/results/human/split/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.transcripts.fa.1.blast_results.tsv.gz',
+		   suffix('.tsv.gz'),
+		   '_filtered.tsv')
+
+def filterBLAST(infile, outfile):
+
+	# Run
+	run_r_job('filter_blast', infile, outfile, conda_env='env', W='03:00', GB=50, n=1, run_locally=False, print_outfile=True, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+#############################################
+########## 5. Merge BLAST
+#############################################
+
+@collate(runBLAST,
+		 regex(r'(.*)/(.*)/split/.*.tsv'),
+		 r'\1/\2/\2-blast_results_merged.tsv')
+
+def mergeBLAST(infiles, outfile):
+	print(infiles, outfile)
+
 
 #######################################################
 #######################################################

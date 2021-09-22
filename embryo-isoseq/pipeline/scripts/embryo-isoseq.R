@@ -670,6 +670,46 @@ add_gene_id <- function(infiles, outfile) {
 
 #######################################################
 #######################################################
+########## S10. BLAST
+#######################################################
+#######################################################
+
+#############################################
+########## 2. Merge genomes
+#############################################
+
+merge_blast_genomes <- function(infile, outfile) {
+
+    # Library
+    require(seqinr)
+
+    # Read FASTA
+    fasta <- read.fasta(infile, whole.header=TRUE, forceDNAtolower=FALSE)
+
+    # Rename
+    genome <- gsub('.*/(.*).fa.gz', '\\1', infile)
+    sequence_names <- paste0(genome, '_', names(fasta))
+
+    # Write FASTA
+    write.fasta(fasta, sequence_names, outfile)   
+
+}
+
+#############################################
+########## 6. Filter BLAST
+#############################################
+
+filter_blast <- function(infile, outfile) {
+
+    # Read
+    blast_dataframe <- read.table(infile, comment.char='#', col.names = c('query_acc_ver', 'subject_acc_ver', 'pct_identity', 'alignment_length', 'mismatches', 'gap_opens', 'q_start', 'q_end', 's_start', 's_end', 'evalue', 'bit_score'))
+
+
+
+}
+
+#######################################################
+#######################################################
 ########## Summary
 #######################################################
 #######################################################
