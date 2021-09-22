@@ -572,7 +572,7 @@ def runRsem(infiles, outfile):
 	run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=True, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
 #############################################
-########## 6. Create BigWig
+########## 4. Create BigWig
 #############################################
 
 @transform(runStarFiltered,
@@ -586,56 +586,6 @@ def createBigWig(infile, outfile):
 
 	# Run
 	run_job(cmd_str, outfile, conda_env='env', W='05:00', n=7, GB=6)
-
-#############################################
-########## 7. Filtered FASTA
-#############################################
-
-# @transform('arion/illumina/s04-alignment.dir/*/all/gtf/*SJ_filtered.gtf',
-# 		   regex(r'(.*.dir)/(.*?)/(.*)/(.*).gtf'),
-# 		   add_inputs(r'arion/datasets/reference_genomes/\2/*dna_sm.primary_assembly.fa'),
-# 		   r'\1/\2/\3/SQANTI3/\4.fasta')
-
-# def getFilteredFasta(infiles, outfile):
-
-# 	# Command
-# 	cmd_str = ''' gffread {infiles[0]} -g {infiles[1]} -w {outfile} '''.format(**locals())
-
-# 	# Run
-# 	run_job(cmd_str, outfile, modules=['gff/2021-02'], W='00:30', GB=10, n=1, stdout=outfile.replace('.fasta', '_fasta.log'), stderr=outfile.replace('.fasta', '_fasta.err'))
-
-#############################################
-########## 8. Run SQANTI
-#############################################
-
-@transform('arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf',
-		   regex(r'(.*.dir)/(.*?)/(.*)/(.*).gtf'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*.gtf', r'arion/datasets/reference_genomes/\2/*.dna_sm.primary_assembly.fa', '/sc/arion/work/torred23/libraries/SQANTI/SQANTI3-4.1/data/polyA_motifs/mouse_and_human.polyA_motif.txt', [r'arion/illumina/s04-alignment.dir/\2/all/STAR/pass2/*/*-SJ.out.tab']),
-		   r'\1/\2/\3/SQANTI3_test5/\4-SQANTI3_report.pdf')
-
-def runSqanti(infiles, outfile):
-
-	# Prepare
-	sj_files = ','.join(infiles[4])
-	dirname = os.path.dirname(outfile)
-	basename = os.path.basename(outfile)[:-len('_report.pdf')]
-
-	# Command
-			# --polyA_motif_list {infiles[3]} \
-			# --cpus 10 \
-	cmd_str = ''' export PYTHONPATH=$PYTHONPATH:/sc/arion/work/torred23/libraries/SQANTI/SQANTI3-4.1/cDNA_Cupcake/ && export PYTHONPATH=$PYTHONPATH:/sc/arion/work/torred23/libraries/SQANTI/SQANTI3-4.1/cDNA_Cupcake/sequence/ && \
-		python /sc/arion/work/torred23/libraries/SQANTI/SQANTI3-4.1/sqanti3_qc.py {infiles[0]} {infiles[1]} {infiles[2]} \
-			--skipORF \
-			-c {sj_files} \
-			--report both \
-			-d {dirname} \
-			-o {basename}
-	'''.format(**locals())
-
-	# Run
-	run_job(cmd_str, outfile, conda_env='SQANTI3_v4.1', W='02:00', n=3, GB=10, print_cmd=True)
-
-# find arion/illumina/s04-alignment.dir/*/all/gtf/SQANTI3 -name "SQANTI3" | xargs rm -r
 
 #######################################################
 #######################################################
@@ -733,69 +683,6 @@ def getGeneExpression(infile, outfile):
 
 	# Run
 	run_r_job('get_gene_expression', infile, outfile, conda_env='env', run_locally=False, ow=False)
-
-#############################################
-########## 5. Get size factors
-#############################################
-
-@transform('arion/illumina/s05-expression.dir/*/all/*-counts.rda',
-		   suffix('-counts.rda'),
-		   '-size_factors.tsv')
-
-def getSizeFactors(infile, outfile):
-
-	# Run
-	run_r_job('get_size_factors', infile, outfile, conda_env='env', modules=[], W='00:15', GB=20, n=1, run_locally=False, print_outfile=False, print_cmd=False)
-
-#############################################
-########## 6. Create scaled BigWig
-#############################################
-
-@transform('arion/illumina/s04-alignment.dir/human/all/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
-		   regex(r'(.*.dir)/(.*?)/(.*)-Aligned.sortedByCoord.out.bam'),
-		   add_inputs(r'arion/illumina/s05-expression.dir/\2/all/\2_all-size_factors.tsv'),
-		   r'\1/\2/\3-scaled.bw')
-
-def createScaledBigWig(infiles, outfile):
-
-	# Read size factor
-	normalization_dict = pd.read_table(infiles[1], index_col='sample_name')['size_factor_reciprocal'].to_dict()
-	size_factor = normalization_dict[outfile.split('/')[-2]]
-
-	# Command
-	cmd_str = """bamCoverage --outFileFormat=bigwig --binSize=1 --skipNonCoveredRegions --numberOfProcessors=48 --scaleFactor {size_factor} -b {infiles[0]} -o {outfile}""".format(**locals())
-
-	# Run
-	run_job(cmd_str, outfile, conda_env='env', W='03:00', n=8, GB=4, print_outfile=True)
-
-#############################################
-########## 7. Merge scaled BigWig
-#############################################
-
-@collate(createScaledBigWig,
-		 regex(r'(.*)/s04-alignment.dir/(.*)/all/STAR/pass2/.*?_(.*?)_.*/.*-scaled.bw'),
-		 add_inputs('arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.chrom.sizes'),
-		 r'\1/s05-expression.dir/\2/all/scaled_bw_test6/\2-\3.bw')
-
-def mergeScaledBigWig(infiles, outfile):
-	
-	# Files
-	wig_file = outfile.replace('.bw', '.wig')
-	bedgraph_file = outfile.replace('.bw', '.bedgraph')
-	infiles_str = ' '.join([x[0] for x in infiles])
-
-	# Command
-	# cmd_str = """ wiggletools mean {infiles_str} > {wig_file} && wiggletools write_bg - {wig_file} | sort -k1,1 -k2,2n > {bedgraph_file} && bedGraphToBigWig {bedgraph_file} {infiles[0][1]} {outfile} && rm {wig_file} {bedgraph_file} """.format(**locals())
-	cmd_str = """ wiggletools mean {infiles_str} | sed '/^KI.*/{{s///;q;}}' > {wig_file} && wiggletools write_bg - {wig_file} | sort -k1,1 -k2,2n > {bedgraph_file} && bedGraphToBigWig {bedgraph_file} {infiles[0][1]} {outfile} && rm {wig_file} {bedgraph_file} """.format(**locals())
-	# cmd_str = """ wiggletools mean {infiles_str} > {wig_file} && wiggletools write_bg - {wig_file} | sort -k1,1 -k2,2n > {bedgraph_file} && bedGraphToBigWig {bedgraph_file} {infiles[0][1]} {outfile} && rm {wig_file} {bedgraph_file} """.format(**locals())
-	# cmd_str = """ wiggletools mean {infiles_str} > {wig_file} """.format(**locals())
-
-	# Run
-	run_job(cmd_str, outfile, modules=['wiggletools/1.2', 'ucsc-utils/2020-03-17'], W='00:30', n=1, GB=10, print_cmd=False, stdout=outfile.replace('.bw', '.log'), stderr=outfile.replace('.bw', '.err'))
-
-# wiggletools write_bg - arion/illumina/s05-expression.dir/human/all/scaled_bw/human-morula.wig | bedSort | head
-
-# find arion/illumina/s04-alignment.dir/human/all/STAR/pass2 -name "*scaled.bw"
 
 #######################################################
 #######################################################
@@ -910,41 +797,7 @@ def runGoEnrichment(infile, outfile):
 	run_r_job('run_go_enrichment', infile, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'))
 
 #############################################
-########## 2. Novelty
-#############################################
-
-# @follows(runDESeq2)
-
-@transform('arion/illumina/s06-differential_expression.dir/*/all/*-gene-deseq.tsv',
-		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-gene-deseq.tsv'),
-		   add_inputs(r'arion/isoseq/s05-talon.dir/\2/*abundance_filtered.tsv'),
-		   r'\1/s07-enrichment.dir/\2/novelty/\3-novelty_enrichment.rda')
-
-def runNoveltyEnrichment(infiles, outfile):
-
-	# Run
-	run_r_job('run_novelty_enrichment', infiles, outfile, modules=['R/4.0.3'], W='01:00', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
-
-# rm -r arion/illumina/s07-enrichment.dir/human/novelty
-
-#############################################
-########## 3. Transcript Novelty
-#############################################
-
-# @follows(runDESeq2)
-
-@transform('arion/illumina/s06-differential_expression.dir/*/all/*-transcript-deseq.tsv',
-		   regex(r'(.*)/s06-differential_expression.dir/(.*)/all/(.*)-transcript-deseq.tsv'),
-		   add_inputs(r'arion/isoseq/s05-talon.dir/\2/*abundance_filtered.tsv'),
-		   r'\1/s07-enrichment.dir/\2/transcript_novelty/\3-transcript_novelty_enrichment.rda')
-
-def runTranscriptNoveltyEnrichment(infiles, outfile):
-
-	# Run
-	run_r_job('run_transcript_novelty_enrichment', infiles, outfile, modules=['R/4.0.3'], W='01:00', GB=5, n=1, run_locally=False, print_outfile=True, print_cmd=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
-
-#############################################
-########## 4. Domain
+########## 2. Domain
 #############################################
 
 # @follows(runDESeq2)
@@ -960,7 +813,7 @@ def runDomainEnrichment(infiles, outfile):
 	run_r_job('run_domain_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'))
 
 # #############################################
-# ########## 5. Repeats
+# ########## 3. Repeats
 # #############################################
 
 # @follows(runDESeq2)
@@ -1347,7 +1200,7 @@ def getPSIClusters(infile, outfile):
 #############################################
 
 def isoformFilterJobs():
-	for organism in ['human']: #, 'mouse'
+	for organism in ['human', 'mouse']:
 		filtered_gtf = glob.glob('arion/illumina/s04-alignment.dir/{organism}/all/gtf/*102_talon-all-SJ_filtered.gtf'.format(**locals()))[0]
 		for file_type in ['gtf_cds', 'cpat_predictions', 'pfam_predictions', 'transcript_fasta']:
 			infile = reference_dict[organism]['isoseq'][file_type]

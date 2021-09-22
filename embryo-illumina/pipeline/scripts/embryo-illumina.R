@@ -393,7 +393,61 @@ run_go_enrichment <- function(infile, outfile) {
 }
 
 #############################################
-########## 2. Domain
+########## 2. Novelty
+#############################################
+
+run_novelty_enrichment <- function(infiles, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(clusterProfiler))
+    suppressPackageStartupMessages(require(enrichplot))
+    
+    # Get signature
+    gene_signature <- fread(infiles[1]) %>% filter(stat!=0) %>% pull(stat, gene_id) %>% sort(decreasing=TRUE)
+
+    # Get gene status
+    gene_dataframe <- fread(infiles[2]) %>% select(gene_novelty, annot_gene_id) %>% distinct %>% filter(gene_novelty != 'Known')
+
+    # Get results
+    gsea_results <- GSEA(gene_signature, maxGSSize=Inf, TERM2GENE=gene_dataframe, pvalueCutoff = Inf, eps=0, nPermSimple=1000000)
+
+    # Get dataframe
+    gsea_dataframe <- lapply(c('Antisense', 'Intergenic'), function(x) enrichplot:::gsInfo(gsea_results, x)) %>% bind_rows %>% mutate(comparison=gsub('.*all-(.*?)-.*', '\\1', infiles[1]))
+
+    # Save
+    save(gsea_results, gsea_dataframe, file=outfile)
+
+}
+
+#############################################
+########## 3. Novelty
+#############################################
+
+run_transcript_novelty_enrichment <- function(infiles, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(clusterProfiler))
+    suppressPackageStartupMessages(require(enrichplot))
+    
+    # Get signature
+    transcript_signature <- fread(infiles[1]) %>% filter(stat!=0) %>% pull(stat, transcript_id) %>% sort(decreasing=TRUE)
+
+    # Get transcript status
+    transcript_dataframe <- fread(infiles[2]) %>% mutate(transcript_novelty_v2=ifelse(gene_novelty=='Known', transcript_novelty, gene_novelty)) %>% select(transcript_novelty, annot_transcript_id) %>% filter(transcript_novelty != 'Known')
+
+    # Get results
+    gsea_results <- GSEA(transcript_signature, maxGSSize=Inf, TERM2GENE=transcript_dataframe, pvalueCutoff = Inf, eps=0)#, nPermSimple=1000000)
+
+    # Get dataframe
+    gsea_dataframe <- lapply(unique(transcript_dataframe$transcript_novelty), function(x) enrichplot:::gsInfo(gsea_results, x)) %>% bind_rows %>% mutate(comparison=gsub('.*all-(.*?)-.*', '\\1', infiles[1]))
+
+    # Save
+    save(gsea_results, gsea_dataframe, file=outfile)
+
+}
+
+#############################################
+########## 4. Domain
 #############################################
 
 run_domain_enrichment <- function(infiles, outfile) {
@@ -417,7 +471,7 @@ run_domain_enrichment <- function(infiles, outfile) {
 }
 
 #############################################
-########## 3. Repeats
+########## 5. Repeats
 #############################################
 
 run_repeat_enrichment <- function(infiles, outfile) {
