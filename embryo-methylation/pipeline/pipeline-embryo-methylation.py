@@ -129,10 +129,7 @@ def trimJobs():
 def trimIlluminaAdapters(infiles, outdir):
 
 	# Command
-	if len(infiles) == 1:
-		cmd_str = '''trim_galore --cores 6 --output_dir {outdir} {infiles[0]}'''.format(**locals())
-	elif len(infiles) == 2:
-		cmd_str = '''trim_galore --paired --cores 6 --output_dir {outdir} {infiles[0]} {infiles[1]}'''.format(**locals())
+	cmd_str = '''trim_galore --paired --rrbs --cores 6 --output_dir {outdir} {infiles[0]} {infiles[1]}'''.format(**locals())
 
 	# Run
 	run_job(cmd_str, outdir, modules=['trim_galore/0.6.6'], W='05:00', GB=6, n=6, print_outfile=False, stdout=os.path.join(outdir, 'job.log'), stderr=os.path.join(outdir, 'job.err'))
@@ -173,6 +170,7 @@ def qcJobs():
 	filelist = [
 		['arion/methylation/s02-fastqc.dir/human/raw', 'arion/methylation/multiqc/human_fastqc/multiqc_report.html'],
 		['arion/methylation/s02-fastqc.dir/human/trimmed', 'arion/methylation/multiqc/human_fastqc_trimmed/multiqc_report.html'],
+		['arion/methylation/s02-fastqc.dir/human', 'arion/methylation/multiqc/human_fastqc_all/multiqc_report.html'],
 		# ['arion/chipseq/s02-fastqc.dir/human/trimmed_50bp', 'arion/chipseq/multiqc/human_fastqc_trimmed_50bp/multiqc_report.html'],
 		# ['arion/chipseq/s03-alignment.dir/human', 'arion/chipseq/multiqc/human_alignment_trimmed_50bp/multiqc_report.html']
 		# ['arion/chipseq/s03-alignment.dir/human', 'arion/chipseq/multiqc/human_alignment_trimmed/multiqc_report.html']
@@ -203,7 +201,7 @@ def runMultiQC(infile, outfile):
 
 @transform('arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa',
 		   regex(r'.*/reference_genomes/(.*)/.*.fa'),
-		   r'arion/methylation/s03-bismark.dir/\1/genome/bismark_genome.fa')
+		   r'arion/methylation/s03-bismark.dir/\1/genome/Bisulfite_Genome')
 
 def prepareBismarkGenome(infile, outfile):
 
@@ -214,11 +212,82 @@ def prepareBismarkGenome(infile, outfile):
 	cmd_str = ''' cp {infile} {genome_dir} && bismark_genome_preparation {genome_dir} --verbose '''.format(**locals()) #--parallel 4
 
 	# Run
-	run_job(cmd_str, outfile, modules=['bismark/0.22.3', 'bowtie2/2.4.1'], W='06:00', GB=50, n=1, stdout=outfile.replace('.fa', '.log'), stderr=outfile.replace('.fa', '.err'))#, print_outfile=False, print_cmd=False)
+	run_job(cmd_str, outfile, print_outfile=True, modules=['bismark/0.22.3', 'bowtie2/2.4.1'], W='06:00', GB=50, n=1, stdout=outfile.replace('.fa', '.log'), stderr=outfile.replace('.fa', '.err'))#, print_outfile=False, print_cmd=False)
 
 #############################################
-########## . 
+########## 2. Run Bismark
 #############################################
+
+@collate('arion/methylation/s01-fastq.dir/human/trimmed/*/*.fq.gz',
+		 regex(r'(.*)/s01-fastq.dir/(.*?)/.*/(.*)/.*.fq.gz'),
+		 add_inputs(r'\1/s03-bismark.dir/\2/genome/'),
+		 r'\1/s03-bismark.dir/\2/results/\3/\3_pe.bam')
+
+def runBismark(infiles, outfile):
+
+	# Directory
+	output_dir = os.path.dirname(outfile)
+	temp_dir = os.path.join(output_dir, 'tmp')
+	basename = os.path.basename(outfile)[:-len('_pe.bam')]
+
+	# Command
+	cmd_str = '''  bismark --genome_folder {infiles[0][1]} -1 {infiles[0][0]} -2 {infiles[1][0]} --output_dir {output_dir} --temp_dir {temp_dir} --basename {basename} '''.format(**locals()) # --parallel 4 
+
+	# Run
+	run_job(cmd_str, outfile, print_cmd=False, modules=['bismark/0.22.3', 'bowtie2/2.4.1', 'samtools/1.13'], W='10:00', GB=50, n=1, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))#, print_outfile=False, print_cmd=False)
+
+# find arion/methylation/s03-bismark.dir/human/results -name "*.log" | js
+
+#############################################
+########## 3. Extract methylation
+#############################################
+
+@transform('arion/methylation/s03-bismark.dir/human/results/human_8C_1_Rep1/human_8C_1_Rep1_pe.bam',
+		   regex(r'(.*)/(.*)'),
+		   r'\1/methylation/\2_splitting_report.txt')
+
+def extractMetylation(infile, outfile):
+	
+	# Directory
+	output_dir = os.path.dirname(outfile)
+
+	# Command
+	cmd_str = '''  bismark_methylation_extractor --gzip --bedGraph --output {output_dir} {infile} '''.format(**locals()) # --parallel 4 
+
+	# Run
+	run_job(cmd_str, outfile, print_cmd=False, modules=['bismark/0.22.3', 'bowtie2/2.4.1', 'samtools/1.13'], W='06:00', GB=30, n=1, stdout=outfile.replace('.txt', '.log'), stderr=outfile.replace('.txt', '.err'))#, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 4. Report
+#############################################
+
+# @follows(runBismark)
+
+@transform('arion/methylation/s03-bismark.dir/human/results/*/*_report.txt',
+		   regex(r'(.*)/results/(.*)/.*.txt'),
+		   r'\1/summary/reports/\2_report.txt')
+
+def createBismarkReport(infile, outfile):
+
+	# Output dir
+	output_dir = os.path.dirname(outfile)
+
+	# Command
+	cmd_str = ''' bismark2report --alignment_report {infile} --dir {output_dir} '''.format(**locals()) # --parallel 4 
+
+	# Run
+	run_job(cmd_str, outfile, print_cmd=False, modules=['bismark/0.22.3', 'bowtie2/2.4.1', 'samtools/1.13'], W='02:00', GB=30, n=1, stdout=outfile.replace('.txt', '.log'), stderr=outfile.replace('.txt', '.err'))#, print_outfile=False, print_cmd=False)
+
+# #############################################
+# ########## 5. Summary
+# #############################################
+
+# @transform('arion/methylation/s03-bismark.dir/human/summary/reports',
+# 		   regex(r'(.*).suffix'),
+# 		   r'\1.new_suffix')
+
+# def createBismarkSummary(infile, outfile):
+# 	print(infile, outfile)
 
 #######################################################
 #######################################################
