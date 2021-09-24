@@ -704,7 +704,7 @@ filter_blast <- function(infile, outfile) {
     # Read
     blast_dataframe <- fread(infile, col.names = c('query_acc_ver', 'subject_acc_ver', 'pct_identity', 'alignment_length', 'mismatches', 'gap_opens', 'q_start', 'q_end', 's_start', 's_end', 'evalue', 'bit_score'))
 
-    # Filter
+    # Filter (v1)
     filtered_dataframe <- blast_dataframe %>% group_by(query_acc_ver, subject_acc_ver) %>% slice_max(order_by = alignment_length, n = 1) %>% 
         mutate(genome=gsub('(.*?)_.*', '\\1', subject_acc_ver)) %>% group_by(query_acc_ver, genome) %>% 
         slice_max(order_by = alignment_length, n = 1) %>% slice_max(order_by = pct_identity, n=1) %>% 
