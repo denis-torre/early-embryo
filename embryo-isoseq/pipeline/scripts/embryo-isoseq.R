@@ -702,9 +702,18 @@ merge_blast_genomes <- function(infile, outfile) {
 filter_blast <- function(infile, outfile) {
 
     # Read
-    blast_dataframe <- read.table(infile, comment.char='#', col.names = c('query_acc_ver', 'subject_acc_ver', 'pct_identity', 'alignment_length', 'mismatches', 'gap_opens', 'q_start', 'q_end', 's_start', 's_end', 'evalue', 'bit_score'))
+    blast_dataframe <- fread(infile, col.names = c('query_acc_ver', 'subject_acc_ver', 'pct_identity', 'alignment_length', 'mismatches', 'gap_opens', 'q_start', 'q_end', 's_start', 's_end', 'evalue', 'bit_score'))
 
+    # Filter
+    filtered_dataframe <- blast_dataframe %>% group_by(query_acc_ver, subject_acc_ver) %>% slice_max(order_by = alignment_length, n = 1) %>% 
+        mutate(genome=gsub('(.*?)_.*', '\\1', subject_acc_ver)) %>% group_by(query_acc_ver, genome) %>% 
+        slice_max(order_by = alignment_length, n = 1) %>% slice_max(order_by = pct_identity, n=1) %>% 
+        slice_max(order_by = bit_score, n=1) %>% slice_min(order_by = evalue, n=1) %>% 
+        slice_min(order_by = q_start, n=1) %>%
+        arrange(query_acc_ver, -pct_identity) %>% filter(evalue < 0.05)
 
+    # Write
+    fwrite(filtered_dataframe, file=outfile, sep='\t')
 
 }
 

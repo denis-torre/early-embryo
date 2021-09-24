@@ -1541,23 +1541,29 @@ def runBLAST(infiles, outfile):
 	cmd_str = ''' blastn -query {infiles[0]} -db {db} -out {outfile_tsv} -task megablast -outfmt 6 -html -num_threads 1 -evalue 1 && gzip {outfile_tsv}'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, print_outfile=False, modules=['blast/2.9.0+'], W='10:00', GB=150, n=1, stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
+	run_job(cmd_str, outfile, print_outfile=False, modules=['blast/2.9.0+'], W='06:00', GB=50, n=6, q='premium', stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
+	# run_job(cmd_str, outfile, print_outfile=False, modules=['blast/2.9.0+'], W='03:00', GB=None, R='himem', q='premium', stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
 
 # find arion/isoseq/s11-blast.dir/results/human/split -name "*.log" | jsc
+# find arion/isoseq/s11-blast.dir/results/human/split -name "*.tsv.gz" | wc -l
 # find arion/isoseq/s11-blast.dir/results/human/split -name "*.log" | js | grep -v completed > errors.sh && chmod +x errors.sh
 
 #############################################
 ########## 6. Filter BLAST
 #############################################
 
-@transform('arion/isoseq/s11-blast.dir/results/human/split/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.transcripts.fa.1.blast_results.tsv.gz',
-		   suffix('.tsv.gz'),
-		   '_filtered.tsv')
+# @transform('arion/isoseq/s11-blast.dir/results/human/split/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.transcripts.fa.1.blast_results.tsv.gz',
+# 		   suffix('.tsv.gz'),
+# 		   '_filtered.tsv')
+
+@transform('arion/isoseq/s11-blast.dir/results/human/split/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.transcripts.fa.*.blast_results.tsv.gz',
+		   regex(r'(.*)/split/(.*).tsv.gz'),
+		   r'\1/filtered_v2/\2_filtered.tsv')
 
 def filterBLAST(infile, outfile):
 
 	# Run
-	run_r_job('filter_blast', infile, outfile, conda_env='env', W='03:00', GB=50, n=1, run_locally=False, print_outfile=True, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+	run_r_job('filter_blast', infile, outfile, conda_env='env', W='00:15', GB=20, n=1, print_outfile=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
 #############################################
 ########## 5. Merge BLAST
