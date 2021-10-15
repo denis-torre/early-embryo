@@ -847,35 +847,6 @@ def getTalonAbundance(infiles, outfile):
 
 # find arion/isoseq/s05-talon.dir -name "*junctions.*" | xargs rm
 
-#############################################
-########## 10. Get junctions
-#############################################
-
-# @follows(filterTranscripts)
-
-@transform('arion/isoseq/s05-talon.dir/*/*.gtf',
-		   regex(r'(.*)/(.*)/(.*).gtf'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*.gtf'),
-		   r'\1/\2/\3_SJs-talon_SJs.tsv')
-
-def getTalonSJs(infiles, outfile):
-	
-	# Get parameters
-	prefix = outfile[:-len('-talon_SJs.tsv')]
-
-	# Command
-	cmd_str = ''' talon_get_sjs \
-		--gtf {infiles[0]} \
-		--ref {infiles[1]} \
-		--outprefix {prefix} '''.format(**locals())
-
-	# Run
-	run_job(cmd_str, outfile, W='30:00', n=1, GB=10, conda_env='talon', print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
-
-
-# find arion/isoseq/s05-talon.dir -name "*_SJs*"  | xargs rm
-# find arion/isoseq/s05-talon.dir -name "*junctions.*" | xargs rm
-
 #######################################################
 #######################################################
 ########## S6. CPAT
@@ -987,28 +958,6 @@ def mergeGTF(infiles, outfile):
 
 	# Run
 	run_r_job('merge_gtf', infiles, outfile, conda_env='env', W='00:45', GB=15, n=1, run_locally=False)
-
-#############################################
-########## 6. Filter SJ transcripts
-#############################################
-
-# @subdivide(mergeGTF,
-@subdivide('arion/isoseq/s06-cpat.dir/*/gtf/*.cds.gtf',
-		   regex(r'(.*)/(.*?)/(gtf)/(.*).gtf'),
-		   add_inputs(r'arion/illumina/s04-alignment.dir/\2/all/gtf/*-all-SJ_filtered.gtf'),
-		   r'\1/\2/\3/\4-*_SJ_filtered.gtf',
-		   r'\1/\2/\3/\4-{transcript_type}_SJ_filtered.gtf')
-
-def filterGTF(infiles, outfiles, outfileRoot):
-
-	# Loop
-	for transcript_type in ['all', 'novel']:
-
-		# Get outfile
-		outfile = outfileRoot.format(**locals())
-
-		# Run
-		run_r_job('filter_gtf', infiles, outfile, additional_params=transcript_type, conda_env='env', W='00:45', GB=15, n=1, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))
 
 #######################################################
 #######################################################
@@ -1336,22 +1285,6 @@ def mergeConservationScores(infiles, outfile):
 	# Run
 	run_r_job('merge_conservation_scores', infiles, outfile, conda_env='env', W='00:10', GB=10, n=1, ow=True)#, run_locally=False, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
 
-#############################################
-########## 8. Get shuffled N content
-#############################################
-
-# @transform(getShuffledExons,
-@transform('arion/isoseq/s09-evolutionary_conservation.dir/human/bed_shuffled/intergenic/exon/Homo_sapiens.GRCh38.102_talon_01-exon-shuffled1-intergenic.bed',
-		   regex(r'(.*)/(.*)/(bed_shuffled/.*).bed'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*dna_sm.primary_assembly.fa'),
-		   r'\1/\2/\3_nucleotide_content.tsv')
-
-def getShuffledN(infiles, outfile):
-
-	# Run
-	run_r_job('get_shuffled_n', infiles, outfile, conda_env='env', W='00:30', GB=10, n=1, ow=True)#, run_locally=False, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
-
-
 #######################################################
 #######################################################
 ########## S10. liftOver
@@ -1379,7 +1312,6 @@ def convertToGenePred(infile, outfile):
 	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:05', GB=1, n=5, print_cmd=False, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
 
 # find arion/isoseq/s10-liftover.dir/*/gp/*.log | jsc
-
 #############################################
 ########## 2. Lift
 #############################################
@@ -1486,80 +1418,6 @@ def addGeneId(infiles, outfile):
 
 	# Run
 	run_r_job('add_gene_id', infiles, outfile, conda_env='env', W='00:05', GB=10, n=1, run_locally=False)#, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
-
-#############################################
-########## 7. Convert to BigBed
-#############################################
-
-def indexJobs():
-	gtf_dict = {
-		'human_ensembl': {
-			'gtf': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.102.gtf',
-			'chromsize_file': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly_renamed.nochr.chromsizes'
-		},
-		'human_all': {
-			'gtf': 'arion/isoseq/s06-cpat.dir/human/gtf/Homo_sapiens.GRCh38.102_talon.cds-all_SJ_filtered.gtf',
-			'chromsize_file': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly_renamed.nochr.chromsizes'
-		},
-		'human_novel': {
-			'gtf': 'arion/isoseq/s06-cpat.dir/human/gtf/Homo_sapiens.GRCh38.102_talon.cds-novel_SJ_filtered.gtf',
-			'chromsize_file': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly_renamed.nochr.chromsizes'
-		},
-		'macaque': {
-			'gtf': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered-gene_id.gtf',
-			'chromsize_file': 'arion/datasets/reference_genomes/macaque/rheMac10.nochr.chromsizes'
-		},
-		'marmoset': {
-			'gtf': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToCalJac4/Homo_sapiens.GRCh38.102_talon.cds-hg38ToCalJac_filtered-gene_id.gtf',
-			'chromsize_file': 'arion/datasets/reference_genomes/marmoset/calJac4.nochr.chromsizes'
-		},
-	}
-	for organism, parameter_dict in gtf_dict.items():
-		gtf = parameter_dict['gtf']
-		infiles = [gtf, parameter_dict['chromsize_file']]
-		outfile = os.path.join(os.path.dirname(gtf), 'ucsc_index', os.path.basename(gtf)[:-len('.gtf')]+'.bb')
-		yield [infiles, outfile]
-
-@files(indexJobs)
-
-def indexGenomes(infiles, outfile):
-
-	# Parameters
-	gff3_file = outfile.replace('.bb', '.gff3')
-	genepred_file = outfile.replace('.bb', '.genePred')
-	bed_file = outfile.replace('.bb', '.bed')
-	input_file = outfile.replace('.bb', '_input.txt')
-	index_file = outfile.replace('.bb', '.ix')
-	index2_file = outfile.replace('.bb', '.ixx')
-	genename_attr = 'gene_name' if 'human' in outfile else 'geneID'
-
-	# Command
-	cmd_str = ''' gtfToGenePred -genePredExt {infiles[0]} stdout | sort -k2,2 -k4n,4n > {genepred_file} && \
-		genePredToBed {genepred_file} {bed_file} && \
-		bedToBigBed -extraIndex=name {bed_file} {infiles[1]} {outfile} && \
-		cat {genepred_file} | awk '{{print $1, $12, $1}}' > {input_file} && \
-		ixIxx {input_file} {index_file} {index2_file}
-	 '''.format(**locals())
-
-	# # Command
-	# cmd_str = ''' gffread -E -F {infiles[0]} -o- | grep -v '^#' > {gff3_file} && \
-	# 	gff3ToGenePred -geneNameAttr={genename_attr} {gff3_file} stdout | sort -k2,2 -k4n,4n > {genepred_file} && \
-	# 	genePredToBed {genepred_file} {bed_file} && \
-	# 	bedToBigBed -extraIndex=name {bed_file} {infiles[1]} {outfile} && \
-	# 	cat {genepred_file} | awk '{{print $1, $12, $1}}' > {input_file} && \
-	# 	ixIxx {input_file} {index_file} {index2_file}
-	#  '''.format(**locals())
-
-	# Run
-	run_job(cmd_str, outfile, modules=['python/2.7.16', 'cufflinks/2.2.1', 'ucsc-utils/2020-03-17'], W='00:15', GB=30, n=1, print_outfile=False, print_cmd=False, stdout=outfile.replace('.bb', '.log'), stderr=outfile.replace('.bb', '.err'))
-
-# ls arion/isoseq/s10-liftover.dir/human/merged/hg38ToCalJac4/ucsc_index/* | grep log | js
-# ls arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/ucsc_index/* | grep log | js
-# ls arion/illumina/s04-alignment.dir/human/all/gtf/ucsc_index/* | grep log | js
-
-# rm -r arion/isoseq/s10-liftover.dir/human/merged/hg38ToCalJac4/ucsc_index/* 
-# rm -r arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/ucsc_index/*
-# rm -r arion/illumina/s04-alignment.dir/human/all/gtf/ucsc_index/*
 
 #######################################################
 #######################################################

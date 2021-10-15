@@ -486,6 +486,33 @@ merge_gtf <- function(infiles, outfile) {
 
 }
 
+#############################################
+########## 6. Filter
+#############################################
+
+filter_gtf <- function(infiles, outfile, transcript_type) {
+    
+    # Read GTF
+    gtf <- rtracklayer::import(infiles[1])
+
+    # Get transcript IDs
+    transcript_ids <- rtracklayer::import(infiles[2])$transcript_id %>% unique
+
+    # Filter
+    if (transcript_type == 'all') {
+        filtered_transcript_ids <- transcript_ids
+    } else if (transcript_type == 'novel') {
+        filtered_transcript_ids <- transcript_ids[grepl('TALON', transcript_ids)]
+    }
+
+    # Filter GTF
+    gtf_filtered <- gtf[gtf$transcript_id %in% filtered_transcript_ids,]
+    
+    # Write
+    rtracklayer::export(gtf_filtered, outfile, format='gtf')
+
+}
+
 #######################################################
 #######################################################
 ########## S7. Pfam
@@ -624,6 +651,40 @@ merge_conservation_scores <- function(infiles, outfile) {
 
 }
 
+#############################################
+########## 8. Get shuffled N content
+#############################################
+
+get_shuffled_n <- function(infiles, outfile) {
+    
+    # Library
+    require(bedr)
+
+    # Read ranges
+    bed_ranges <- rtracklayer::import(infiles[1])
+
+    # Convert to dataframe
+    bed_dataframe <- bed_ranges %>% as.data.frame %>% rename('chr'='seqnames') %>% mutate(chr=gsub('chr', '', chr)) %>% arrange(chr, start)
+
+    # Get fasta
+    range_fasta <- get.fasta(bed_dataframe, fasta=infiles[2], check.chr=FALSE)
+
+    # Get counts
+    count_dataframe <- apply(range_fasta, 1, function(x) {
+        nucleotide_counts <- table(strsplit(toupper(x['sequence']), "")[[1]])
+        suppressWarnings(data.frame(coordinates=x['index'], nucleotide_counts))
+    }) %>% bind_rows %>% rename('nucleotide'='Var1', 'count'='Freq')
+
+    # Get fraction per sequence
+    fraction_dataframe <- bed_dataframe %>% mutate(coordinates=glue('{chr}:{start}-{end}'), transcript_shuffle=gsub('(.*)_exon.*?-(.*)', '\\1_\\2', name)) %>% 
+        select(coordinates, transcript_shuffle) %>% inner_join(count_dataframe, by='coordinates') %>% group_by(transcript_shuffle, nucleotide) %>% summarize(nucleotide_count=sum(count)) %>%
+        mutate(nucleotide_percent=prop.table(nucleotide_count)) %>% pivot_wider(id_cols = transcript_shuffle, names_from = nucleotide, values_from = nucleotide_percent, values_fill = 0)
+
+    # Write
+    fwrite(fraction_dataframe, file=outfile, sep='\t')
+
+}
+
 #######################################################
 #######################################################
 ########## S10. liftOver
@@ -704,14 +765,18 @@ filter_blast <- function(infile, outfile) {
     # Read
     blast_dataframe <- fread(infile, col.names = c('query_acc_ver', 'subject_acc_ver', 'pct_identity', 'alignment_length', 'mismatches', 'gap_opens', 'q_start', 'q_end', 's_start', 's_end', 'evalue', 'bit_score'))
 
-    # Filter (v1)
-    filtered_dataframe <- blast_dataframe %>% group_by(query_acc_ver, subject_acc_ver) %>% slice_max(order_by = alignment_length, n = 1) %>% 
-        mutate(genome=gsub('(.*?)_.*', '\\1', subject_acc_ver)) %>% group_by(query_acc_ver, genome) %>% 
-        slice_max(order_by = alignment_length, n = 1) %>% slice_max(order_by = pct_identity, n=1) %>% 
-        slice_max(order_by = bit_score, n=1) %>% slice_min(order_by = evalue, n=1) %>% 
-        slice_min(order_by = q_start, n=1) %>%
-        arrange(query_acc_ver, -pct_identity) %>% filter(evalue < 0.05)
+    # # Filter (v1)
+    # filtered_dataframe <- blast_dataframe %>% group_by(query_acc_ver, subject_acc_ver) %>% slice_max(order_by = alignment_length, n = 1) %>% 
+    #     mutate(genome=gsub('(.*?)_.*', '\\1', subject_acc_ver)) %>% group_by(query_acc_ver, genome) %>% 
+    #     slice_max(order_by = alignment_length, n = 1) %>% slice_max(order_by = pct_identity, n=1) %>% 
+    #     slice_max(order_by = bit_score, n=1) %>% slice_min(order_by = evalue, n=1) %>% 
+    #     slice_min(order_by = q_start, n=1) %>%
+    #     arrange(query_acc_ver, -pct_identity) %>% filter(evalue < 0.05)
 
+    # Filter (v2)
+    filtered_dataframe <- blast_dataframe %>% filter(pct_identity > 90 & alignment_length > 100 & evalue < 0.05) %>% 
+        mutate(genome=gsub('(.*?)_.*', '\\1', subject_acc_ver)) %>% select(query_acc_ver, genome) %>% distinct
+    
     # Write
     fwrite(filtered_dataframe, file=outfile, sep='\t')
 
