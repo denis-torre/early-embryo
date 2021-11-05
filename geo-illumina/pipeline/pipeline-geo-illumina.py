@@ -595,7 +595,7 @@ def getSizeFactors(infile, outfile):
 @transform('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-Aligned.sortedByCoord.out.bam',
 		   regex(r'(.*.dir)/(.*?)/(.*)-Aligned.sortedByCoord.out.bam'),
 		   add_inputs(r'arion/geo_illumina/s04-expression.dir/\2/\2-size_factors.tsv'),
-		   r'\1/\2/\3-scaled.bw')
+		   r'\1/\2/\3-scaled_3.bw')
 
 def createScaledBigWig(infiles, outfile):
 
@@ -604,12 +604,40 @@ def createScaledBigWig(infiles, outfile):
 	size_factor = normalization_dict[outfile.split('/')[-2]]
 
 	# Command
-	cmd_str = """bamCoverage --outFileFormat=bigwig --binSize=1 --skipNonCoveredRegions --numberOfProcessors=48 --scaleFactor {size_factor} -b {infiles[0]} -o {outfile}""".format(**locals())
+	cmd_str = """bamCoverage --outFileFormat=bigwig --binSize=3 --skipNonCoveredRegions --numberOfProcessors=48 --scaleFactor {size_factor} -b {infiles[0]} -o {outfile}""".format(**locals())
 
 	# Run
 	run_job(cmd_str, outfile, conda_env='env', W='02:00', n=8, GB=4, print_outfile=False)
 
 # find arion/geo_illumina/s03-alignment.dir/liu/STAR/pass2 -name "*scaled.bw"
+
+#############################################
+########## 7. Merge scaled BigWig
+#############################################
+
+# @collate(createScaledBigWig,
+@collate('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-scaled_3.bw',
+		 regex(r'(.*)/s03-alignment.dir/(.*)/STAR/pass2/(.*?)_Rep.*/*-scaled_3.bw'),
+		 add_inputs(r'arion/datasets/reference_genomes/human/*.chrom.sizes'),
+		 r'\1/s04-expression.dir/\2/scaled_bw/\3-\2.bw')
+
+def mergeScaledBigWig(infiles, outfile):
+	
+	# Files
+	wig_file = outfile.replace('.bw', '.wig')
+	bedgraph_file = outfile.replace('.bw', '.bedgraph')
+	infiles_str = ' '.join([x[0] for x in infiles])
+
+	# Command
+	# cmd_str = """ wiggletools mean {infiles_str} > {wig_file} && wigToBigWig {wig_file} {infiles[0][1]} {outfile} && rm {wig_file} """.format(**locals())
+	cmd_str = """ wiggletools mean {infiles_str} | sed '/^KI.*/{{s///;q;}}' > {wig_file} && wigToBigWig {wig_file} {infiles[0][1]} {outfile} && rm {wig_file} """.format(**locals())
+	# cmd_str = """ wiggletools mean {infiles_str} > {wig_file} && wiggletools write_bg - {wig_file} | sort -k1,1 -k2,2n > {bedgraph_file} && bedGraphToBigWig {bedgraph_file} {infiles[0][1]} {outfile} && rm {wig_file} {bedgraph_file} """.format(**locals())
+	# cmd_str = """ wiggletools mean {infiles_str} | sed '/^KI.*/{{s///;q;}}' > {wig_file} && wiggletools write_bg - {wig_file} | sort -k1,1 -k2,2n > {bedgraph_file} && bedGraphToBigWig {bedgraph_file} {infiles[0][1]} {outfile} && rm {wig_file} {bedgraph_file} """.format(**locals())
+	# cmd_str = """ wiggletools mean {infiles_str} > {wig_file} && wiggletools write_bg - {wig_file} | sort -k1,1 -k2,2n > {bedgraph_file} && bedGraphToBigWig {bedgraph_file} {infiles[0][1]} {outfile} && rm {wig_file} {bedgraph_file} """.format(**locals())
+	# cmd_str = """ wiggletools mean {infiles_str} > {wig_file} """.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, modules=['wiggletools/1.2', 'ucsc-utils/2020-03-17'], W='00:30', n=1, GB=10, print_outfile=False, stdout=outfile.replace('.bw', '.log'), stderr=outfile.replace('.bw', '.err'))
 
 #######################################################
 #######################################################
@@ -1019,11 +1047,11 @@ def createPrimateScaledBigWig(infiles, outfile):
 # @collate(createScaledBigWig,
 @collate('arion/geo_illumina/s05-primates.dir/*/STAR/pass2/*/*-scaled_3.bw',
 		#  regex(r'(.*)/s04-alignment.dir/(.*)/all/STAR/pass2/.*?_(morula)_.*/.*-scaled_3.bw'),
-		 regex(r'(.*)/(.*?)/STAR/pass2/(.*)_.*/.*.bw'),
-		#  add_inputs('arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.chrom.sizes'),
+		 regex(r'(.*)/(.*?)/STAR/pass2/(.*?_.*?)_.*/.*.bw'),
+		 add_inputs(r'arion/datasets/reference_genomes/\2/*.chrom.sizes'),
 		 r'\1/\2/RSEM/counts/scaled_bw/\3.bw')
 
-def mergeScaledBigWig(infiles, outfile):
+def mergePrimateScaledBigWig(infiles, outfile):
 	
 	# Files
 	wig_file = outfile.replace('.bw', '.wig')
@@ -1031,14 +1059,15 @@ def mergeScaledBigWig(infiles, outfile):
 	infiles_str = ' '.join([x[0] for x in infiles])
 
 	# Command
-	cmd_str = """ wiggletools mean {infiles_str} | sed '/^KI.*/{{s///;q;}}' > {wig_file} && wigToBigWig {wig_file} {infiles[0][1]} {outfile} && rm {wig_file} """.format(**locals())
+	cmd_str = """ wiggletools mean {infiles_str} > {wig_file} && wigToBigWig {wig_file} {infiles[0][1]} {outfile} && rm {wig_file} """.format(**locals())
+	# cmd_str = """ wiggletools mean {infiles_str} | sed '/^KI.*/{{s///;q;}}' > {wig_file} && wigToBigWig {wig_file} {infiles[0][1]} {outfile} && rm {wig_file} """.format(**locals())
 	# cmd_str = """ wiggletools mean {infiles_str} > {wig_file} && wiggletools write_bg - {wig_file} | sort -k1,1 -k2,2n > {bedgraph_file} && bedGraphToBigWig {bedgraph_file} {infiles[0][1]} {outfile} && rm {wig_file} {bedgraph_file} """.format(**locals())
 	# cmd_str = """ wiggletools mean {infiles_str} | sed '/^KI.*/{{s///;q;}}' > {wig_file} && wiggletools write_bg - {wig_file} | sort -k1,1 -k2,2n > {bedgraph_file} && bedGraphToBigWig {bedgraph_file} {infiles[0][1]} {outfile} && rm {wig_file} {bedgraph_file} """.format(**locals())
 	# cmd_str = """ wiggletools mean {infiles_str} > {wig_file} && wiggletools write_bg - {wig_file} | sort -k1,1 -k2,2n > {bedgraph_file} && bedGraphToBigWig {bedgraph_file} {infiles[0][1]} {outfile} && rm {wig_file} {bedgraph_file} """.format(**locals())
 	# cmd_str = """ wiggletools mean {infiles_str} > {wig_file} """.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, modules=['wiggletools/1.2', 'ucsc-utils/2020-03-17'], W='00:30', n=1, GB=10, print_outfile=True, stdout=outfile.replace('.bw', '.log'), stderr=outfile.replace('.bw', '.err'))
+	run_job(cmd_str, outfile, modules=['wiggletools/1.2', 'ucsc-utils/2020-03-17'], W='00:30', n=1, GB=10, print_outfile=False, stdout=outfile.replace('.bw', '.log'), stderr=outfile.replace('.bw', '.err'))
 
 #############################################
 ########## 9. Create BigWig
