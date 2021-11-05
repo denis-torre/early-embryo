@@ -17,6 +17,8 @@ import sys
 import os
 import json
 import glob
+import re
+from Bio import SeqIO
 import pandas as pd
 import numpy as np
 # from rpy2.robjects import r, pandas2ri
@@ -593,6 +595,31 @@ def getChromSizes(infile, outfile):
 
 	# Run
 	run_job(cmd_str, outfile, conda_env=False, modules=['python/3.7.3'], W='00:15', GB=10, n=1, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 4. Get N locations
+#############################################	
+
+@transform('arion/datasets/reference_genomes/*/*.dna_sm.primary_assembly.fa',
+		   suffix('.fa'),
+		   '_gaps.bed')
+
+def getChromosomeGaps(infile, outfile):
+
+	# Initialize
+	results = []
+
+	# Read
+	with open(infile) as handle:
+		for record in SeqIO.parse(handle, "fasta"):
+			for match in re.finditer('N+', str(record.seq)):
+				results.append({'chr': record.id, 'start': match.start(), 'end': match.end()})
+
+	# Concatenate
+	result_dataframe = pd.DataFrame(results)
+
+	# Write
+	result_dataframe.to_csv(outfile, sep='\t', index=False, header=False)
 
 #######################################################
 #######################################################
