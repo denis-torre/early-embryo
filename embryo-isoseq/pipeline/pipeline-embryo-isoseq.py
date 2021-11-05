@@ -91,6 +91,11 @@ human_flnc = 'arion/datasets/human/human_embryo_pacb/*.flnc.bam'
 # Illumina
 illumina_fastq = 'arion/illumina/s01-fastq.dir/*/trimmed/*/*.fq.gz'
 
+# Outlier samples
+outlier_sample_file = '../embryo-illumina/pipeline/outlier_samples.json'
+with open(outlier_sample_file) as openfile:
+	outlier_samples = json.load(openfile)
+
 # Pfam
 # illumina_dict = {
 # 	'human': glob.glob(human_illumina),
@@ -360,7 +365,7 @@ def runMultiQC(infile, outfile):
 ########## 1. STAR index
 #############################################
 
-# @follows(filterSam)
+@follows(filterSam)
 
 @transform('arion/datasets/reference_genomes/*/*.102.gtf',
 		   regex(r'(.*)/(.*)/(.*).102.gtf'),
@@ -417,12 +422,12 @@ def getSJsPass1(infiles, outfile):
 @collate(illumina_fastq,
 		regex(r'.*/s01-fastq.dir/(.*)/trimmed/(.*)/.*.fq.gz'),
 		add_inputs(r'arion/isoseq/s03-illumina_alignment.dir/\1/STAR/index/', r'arion/isoseq/s03-illumina_alignment.dir/\1/STAR/pass1/*/*-SJ.out.tab'),
-		r'arion/isoseq/s03-illumina_alignment.dir/\1/STAR/pass2/\2/\2-SJ.out.tab')
+		r'arion/isoseq/s03-illumina_alignment.dir/\1/STAR/pass2/\2/\2-Aligned.sortedByCoord.out.bam')
 
 def getSJsPass2(infiles, outfile):
 
 	# Prefix
-	prefix = outfile[:-len('SJ.out.tab')]
+	prefix = outfile[:-len('Aligned.sortedByCoord.out.bam')]
 	sj_files_str = ' '.join(infiles[0][2:])
 
 	# Command
@@ -434,25 +439,61 @@ def getSJsPass2(infiles, outfile):
 		--runThreadN 50 \
 		--sjdbFileChrStartEnd {sj_files_str} \
 		--limitSjdbInsertNsj 5000000 \
-		--outSAMtype None'''.format(**locals())
+		--quantMode TranscriptomeSAM GeneCounts \
+		--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="10:00", GB=10, n=10, modules=['star/2.7.5b'], print_cmd=False, stdout=outfile.replace('-SJ.out.tab', '-job.log'), q='premium', wait=False)
+	run_job(cmd_str, outfile, W="10:00", GB=10, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_cmd=True, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.log'))
 
-# find arion/isoseq/s03-illumina_alignment.dir/*/STAR/pass2 -name "*job.log" | jsc
+# find arion/isoseq/s03-illumina_alignment.dir/*/STAR/pass2 -name "*.log" | jsc
 
 #############################################
 ########## 4. Merge SJ files
 #############################################
 
-@collate((getSJsPass1, getSJsPass2),
+# @follows(getSJsPass1, getSJsPass2)
+
+@collate(('arion/isoseq/s03-illumina_alignment.dir/*/STAR/pass1/*/*-SJ.out.tab', 'arion/isoseq/s03-illumina_alignment.dir/*/STAR/pass2/*/*-SJ.out.tab'),
 		 regex(r'(.*.dir)/(.*)/STAR/.*.tab'),
 		 r'\1/\2/STAR/\2-merged.SJ.out.tab')
 
 def mergeSJs(infiles, outfile):
 
 	# Run
-	run_r_job('merge_sjs', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1)
+	run_r_job('merge_sjs', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, stdout=outfile.replace('.tab', '.log'), stderr=outfile.replace('.tab', '.err'))#, q='premium')
+
+#############################################
+########## 5. RSEM expression
+#############################################
+# rsem index
+# @follows(runStarFiltered, createRsemIndex)
+
+# @transform('arion/illumina/s04-alignment.dir/*/*/STAR/pass2/*/*-Aligned.toTranscriptome.out.bam',
+# 		   regex(r'(.*)/STAR/.*/(.*)-Aligned.toTranscriptome.out.bam'),
+# 		   add_inputs(r'\1/RSEM/index/*.idx.fa'),
+# 		   r'\1/RSEM/results/\2/\2.isoforms.results')
+
+# def runRsem(infiles, outfile):
+
+# 	# Variables
+# 	prefix = outfile[:-len('.isoforms.results')]
+# 	reference_name = infiles[1][:-len('.idx.fa')]
+
+# 	# Command
+# 	cmd_str = '''rsem-calculate-expression \
+# 		--alignments \
+# 		--strandedness none \
+# 		--paired-end \
+# 		--estimate-rspd \
+# 		--num-threads 200 \
+# 		{infiles[0]} \
+# 		{reference_name} \
+# 		{prefix} > {prefix}.rsem.log && \
+# 		rsem-plot-model {prefix} {prefix}.quant.pdf '''.format(**locals())
+# 		# --calc-ci \
+
+# 	# Run
+# 	run_job(cmd_str, outfile, W="06:00", GB=2, n=25, modules=['rsem/1.3.3'], print_cmd=True, stdout=outfile.replace('.isoforms.results', '.log'), stderr=outfile.replace('.isoforms.results', '.err'))
 
 #######################################################
 #######################################################
@@ -480,7 +521,7 @@ def renameFastaChromosomes(infile, outfile):
 ########## 2. Clean
 #############################################
 
-@follows(mergeSJs, renameFastaChromosomes)
+# @follows(mergeSJs, renameFastaChromosomes)
 
 @transform(filterSam,
 		   regex(r'(.*)/s02-alignment.dir/minimap2/(.*)/(.*)/.*.sam'),
@@ -507,9 +548,10 @@ def runTranscriptClean(infiles, outfile):
 	'''.format(**locals())
 	
 	# Run
-	run_job(cmd_str, outfile, W="03:00", GB=5, n=10, conda_env='talon', q='sla', stdout=outfile.replace('_clean.sam', '_job.log'), stderr=outfile.replace('_clean.sam', '_job.err'))
+	run_job(cmd_str, outfile, print_cmd=False, W="03:00", GB=5, n=10, conda_env='talon', stdout=outfile.replace('_clean.sam', '_job.log'), stderr=outfile.replace('_clean.sam', '_job.err'))
 
 # find arion/isoseq/s04-cleaned_transcripts.dir -name "*_job.log" | jsc
+# find arion/isoseq/s04-cleaned_transcripts.dir -name "*_clean.sam" | xargs wc -l
 # find arion/isoseq/s04-cleaned_transcripts.dir -name "*_job.err" | xargs wc -l
 
 #############################################
@@ -541,8 +583,7 @@ def flagReads(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, W="02:00", GB=15, n=1, conda_env='talon', stdout=outfile.replace('_labeled.sam', '_job.log'), stderr=outfile.replace('_labeled.sam', '_job.err'))
 
-# find arion/isoseq/s04-cleaned_transcripts.dir/*/* -name "flagged" | xargs rm -r
-# find arion/isoseq/s04-cleaned_transcripts.dir/*/*/flagged -name "*job.log" | js
+# find arion/isoseq/s04-cleaned_transcripts.dir/*/*/flagged -name "*job.log" | jsc
 # find arion/isoseq/s04-cleaned_transcripts.dir/*/*/flagged -name "*job.err" | xargs wc -l
 
 #######################################################
@@ -555,7 +596,7 @@ def flagReads(infiles, outfile):
 ########## 1. Initialize
 #############################################
 
-@transform('arion/datasets/reference_genomes/*/*.102.gtf',
+@transform('arion/datasets/reference_genomes/*/*GRC*.102.gtf',
 		   regex(r'(.*)/(.*)/(.*)(.102).gtf'),
 		   add_inputs(r'\1/\2/\3.dna_sm.primary_assembly.fa'),
 		   r'arion/isoseq/s05-talon.dir/\2/\3\4_talon.db')
@@ -579,7 +620,7 @@ def initializeTalonDatabase(infiles, outfile):
 		--o {outname} '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W='01:00', n=1, GB=15, conda_env='talon', print_cmd=False, stdout=outfile.replace('.db', '.log'), stderr=outfile.replace('.db', '.err'), wait=True)
+	run_job(cmd_str, outfile, W='01:00', n=1, GB=15, conda_env='talon', print_cmd=False, stdout=outfile.replace('.db', '.log'), stderr=outfile.replace('.db', '.err'), wait=False)
 
 #############################################
 ########## 2. Config
@@ -611,7 +652,7 @@ def createTalonConfig(infiles, outfile):
 ########## 3. Run
 #############################################
 
-@follows(createTalonConfig)
+# @follows(createTalonConfig)
 
 @transform(initializeTalonDatabase,
 		   regex(r'(.*)/(.*).db'),
@@ -640,12 +681,12 @@ def runTalon(infiles, outfile):
 		--o {outname} '''.format(**locals())
 
 	# Run
-	# run_job(cmd_str, outfile, W='06:00', n=10, GB=10, conda_env='talon', print_cmd=False, stdout=outfile.replace('_QC.log', '.log'), stderr=outfile.replace('_QC.log', '.err'))
+	run_job(cmd_str, outfile, W='06:00', n=10, GB=10, conda_env='talon', print_cmd=True, stdout=outfile.replace('_QC.log', '.log'), stderr=outfile.replace('_QC.log', '.err'))
 
 # wc -l arion/isoseq/s05-talon.dir/*/*_QC.log
 
-# human 9,444,700 reads
-# mouse 747,163 reads
+# human 9,444,700 reads - now 9,464,557, 94,66,531 from TranscriptClean
+# mouse 747,163 reads - now 748,503, 748,987 from TranscriptClean
 
 # find arion/isoseq/s04-cleaned_transcripts.dir/human -name "*clean_labeled.sam" | xargs wc -l
 # find arion/isoseq/s04-cleaned_transcripts.dir/mouse -name "*clean_labeled.sam" | xargs wc -l
@@ -654,14 +695,14 @@ def runTalon(infiles, outfile):
 ########## 4. Filter transcripts
 #############################################
 
-@follows(runTalon)
+# @follows(runTalon)
 
 @transform(initializeTalonDatabase,
 		   regex(r'(.*).db'),
-		   r'\1_filtered_transcripts.tsv')
+		   r'\1_transcripts.tsv')
 
 def filterTranscripts(infile, outfile):
-
+	
 	# Open database
 	with sqlite3.connect(infile) as conn:
 
@@ -669,21 +710,10 @@ def filterTranscripts(infile, outfile):
 		query = """ SELECT DISTINCT gene_ID, transcript_ID 
 						FROM transcripts
 						WHERE transcript_ID NOT IN (
-							SELECT DISTINCT ID
-								FROM transcript_annotations
-								WHERE (attribute = "ISM_transcript" AND value = "TRUE")
-								OR (attribute = "genomic_transcript" AND value = "TRUE")
-						) AND transcript_ID NOT IN (
 							SELECT DISTINCT transcript_ID
 								FROM observed
 								GROUP BY transcript_ID
 								HAVING MIN(fraction_As) > 0.6
-						) AND transcript_ID NOT IN (
-							SELECT DISTINCT tx.transcript_ID
-								FROM transcripts tx
-								LEFT JOIN transcript_annotations ta
-									ON tx.transcript_ID=ta.ID
-								WHERE n_exons = 1 AND source = 'TALON'
 						)
 		""".format(**locals())
 
@@ -693,11 +723,6 @@ def filterTranscripts(infile, outfile):
 	# Write
 	id_dataframe.to_csv(outfile, header=False, index=False)
 
-# find arion/isoseq/s05-talon.dir -name "*filtered_transcripts.tsv" | xargs wc -l
-# find arion/isoseq/s05-talon.dir -name "*filtered_transcripts.tsv" | xargs rm
-# find arion/isoseq/s05-talon.dir -name "*reference*" | xargs rm
-# find arion/isoseq/s05-talon.dir -name "*.gtf" | xargs rm
-
 #############################################
 ########## 5. Get GTF
 #############################################
@@ -705,9 +730,9 @@ def filterTranscripts(infile, outfile):
 @follows(filterTranscripts)
 
 @transform(initializeTalonDatabase,
-		   regex(r'(.*).db'),
-		   add_inputs(r'\1_filtered_transcripts.tsv'),
-		   r'\1.gtf')
+		   regex(r'(.*)/(.*).db'),
+		   add_inputs(r'\1/\2_transcripts.tsv'),
+		   r'\1/gtf/\2.gtf')
 
 def getTalonGTF(infiles, outfile):
 	
@@ -725,104 +750,17 @@ def getTalonGTF(infiles, outfile):
 		--o {prefix} '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W='00:10', n=1, GB=10, conda_env='talon', print_cmd=False, stdout=outfile.replace('.gtf', '_reference.log'), stderr=outfile.replace('.gtf', '_reference.err'))
+	run_job(cmd_str, outfile, W='00:10', n=1, GB=10, conda_env='talon', print_cmd=False, stdout=outfile.replace('.gtf', '_gtf.log'), stderr=outfile.replace('.gtf', '_gtf.err'))
 
 #############################################
-########## 6. Get FASTA
+########## 6. Get abundance
 #############################################
 
-@transform(getTalonGTF,
-		   regex(r'(.*)/(.*)/(.*).gtf'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*.dna_sm.primary_assembly.fa'),
-		   r'\1/\2/\3.fasta')
-
-def getFASTA(infiles, outfile):
-
-	# Command
-	cmd_str = ''' gffread {infiles[0]} -g {infiles[1]} -w {outfile} '''.format(**locals())
-
-	# Run
-	run_job(cmd_str, outfile, modules=['gff/2021-02'], W='00:30', GB=10, n=1, stdout=outfile.replace('.fasta', '_fasta.log'), stderr=outfile.replace('.fasta', '_fasta.err'))
-
-#############################################
-########## 7. Transcript summary
-#############################################
-
-@follows(runTalon)
-
-@transform(filterTranscripts,
-		   regex(r'(.*)(_filtered_transcript)s.tsv'),
-		   add_inputs(r'\1.db'),
-		   r'\1\2_summary.tsv')
-
-def getTalonSummary(infiles, outfile):
-	
-	# Read IDs
-	id_dataframe = pd.read_csv(infiles[0], header=None, names=['gene_ID', 'transcript_ID'])
-
-	# Initialize connection
-	conn = sqlite3.connect(infiles[1])
-
-	### Genes
-	# Gene annotation
-	gene_dataframe = pd.read_sql_query(""" SELECT DISTINCT ID as gene_ID, attribute, value FROM gene_annotations """, conn).pivot(index='gene_ID', columns='attribute', values='value')
-	gene_dataframe['gene_category'] = ['known' if rowData['gene_status'] == 'KNOWN' else ','.join([x for x in ['intergenic_novel', 'antisense_gene'] if rowData[x] == 'TRUE']) for index, rowData in gene_dataframe.iterrows()]
-	gene_dataframe['gene_source'] = gene_dataframe['gene_source'].fillna('talon')
-	gene_dataframe['gene_biotype'] = gene_dataframe['gene_biotype'].fillna('not_available')
-	gene_dataframe = gene_dataframe[['gene_id', 'gene_name', 'gene_biotype', 'gene_source', 'gene_category']].reset_index()
-
-	### Transcripts
-	# Novel transcript annotation
-	query = """ SELECT DISTINCT ID AS transcript_ID, attribute, value FROM transcript_annotations WHERE source == 'TALON' AND attribute LIKE '%transcript%' AND attribute NOT LIKE 'ISM-%' """
-	novel_transcript_dataframe = pd.read_sql_query(query, conn).pivot(index='transcript_ID', columns='attribute', values='value')
-	novel_transcript_dataframe['category'] = [','.join([key.replace('_transcript', '') for key, value in rowData.items() if value == 'TRUE']) for index, rowData in novel_transcript_dataframe.iterrows()]
-	novel_transcript_dataframe = novel_transcript_dataframe[['transcript_id', 'transcript_name', 'category']]
-	novel_transcript_dataframe['transcript_source'] = 'talon'
-	novel_transcript_dataframe['transcript_biotype'] = 'not_available'
-
-	# Known transcript annotation
-	known_transcript_dataframe = pd.read_sql_query(""" SELECT DISTINCT ID AS transcript_ID, attribute, value FROM transcript_annotations WHERE source != 'TALON' """, conn).pivot(index='transcript_ID', columns='attribute', values='value').drop(['ccds_id', 'tag', 'transcript_status', 'transcript_support_level', 'transcript_version', 'source'], axis=1)
-	known_transcript_dataframe['category'] = 'FSM'
-
-	# Concatenate
-	transcript_dataframe = pd.concat([x[['transcript_id', 'transcript_name', 'category', 'transcript_source', 'transcript_biotype']] for x in (known_transcript_dataframe, novel_transcript_dataframe)], axis=0).rename(columns={'category': 'transcript_category'}).reset_index()
-
-	# Add observed column
-	# observed_transcript_ids = pd.read_sql_query(""" SELECT DISTINCT transcript_ID FROM observed """, conn)['transcript_ID']
-	# transcript_dataframe['observed_transcript'] = [x in observed_transcript_ids for x in transcript_dataframe['transcript_ID']]
-
-	### Merge
-	result_dataframe = id_dataframe.merge(gene_dataframe, on='gene_ID', how='left').merge(transcript_dataframe, on='transcript_ID', how='left').drop(['gene_ID', 'transcript_ID'], axis=1)
-
-	# Close
-	conn.close()
-
-	# Write
-	result_dataframe.to_csv(outfile, sep='\t', index=False)
-
-#############################################
-########## 8. Get SJs
-#############################################
-
-# @transform(getTalonGTF,
-@transform('arion/isoseq/s05-talon.dir/*/*.gtf',
-		   regex(r'(.*)/(.*)/(.*).gtf'),
-		   r'\1/\2/\3_junctions.tsv')
-
-def getJunctions(infile, outfile):
-
-	# Run
-	run_r_job('get_junctions', infile, outfile, conda_env='env', W='02:00', GB=20, n=5, run_locally=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
-
-#############################################
-########## 9. Get abundance
-#############################################
-
-@follows(filterTranscripts)
+# @follows(filterTranscripts)
 
 @transform('arion/isoseq/s05-talon.dir/*/*.102_talon.db',
 		   regex(r'(.*)/(.*).db'),
-		   add_inputs(r'\1/\2_filtered_transcripts.tsv'),
+		   add_inputs(r'\1/\2_transcripts.tsv'),
 		   r'\1/\2_abundance_filtered.tsv')
 
 def getTalonAbundance(infiles, outfile):
@@ -844,6 +782,264 @@ def getTalonAbundance(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, W='01:00', n=1, GB=25, conda_env='talon', print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
+#############################################
+########## 7. SQANTI
+#############################################
+
+# @transform('arion/isoseq/s05-talon.dir/human/gtf/Homo_sapiens.GRCh38.102_talon.chr19.gtf',
+# @transform('arion/isoseq/old/2021_10_19/s05-talon.dir-1/human/Homo_sapiens.GRCh38.102_talon.chr19.gtf',
+@transform(getTalonGTF,
+		   regex(r'(.*)/(.*)/gtf/(.*).gtf'),
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.gtf', r'arion/datasets/reference_genomes/\2/*.primary_assembly.fa', r'/sc/arion/projects/GuccioneLab/genome-indices/*/polya/\2_polyA_motifs.txt', r'/sc/arion/work/torred23/libraries/SQANTI/SQANTI3-4.2/data/ref_TSS_annotation/\2.refTSS_v3.1.????.nochr.bed', r'arion/isoseq/s03-illumina_alignment.dir/\2/STAR/pass2/*/*-SJ.out.tab'),
+		   r'\1/\2/gtf/sqanti/\3_SQANTI3_report.pdf')
+
+def runSqanti(infiles, outfile):
+	
+	# Add paths
+	transcript_gtf, ensembl_gtf, ensembl_fasta, polya_file, tss_file = infiles[:5]
+	sj_files = ','.join([x for x in infiles[5:] if not any([y in x for y in outlier_samples[outfile.split('/')[-4]]])])
+
+	# Get output
+	outdir = os.path.dirname(outfile)
+	output = os.path.basename(outfile)[:-len('_SQANTI3_report.pdf')]
+
+	# PYTHONPATH
+	PYTHONPATH = '/sc/arion/work/torred23/libraries/SQANTI/SQANTI3-4.2/cDNA_Cupcake/:/sc/arion/work/torred23/libraries/SQANTI/SQANTI3-4.2/cDNA_Cupcake/sequence'
+
+	# Command
+		# --cage_peak {tss_file} \
+	cmd_str = ''' export PYTHONPATH={PYTHONPATH} && /sc/arion/work/torred23/libraries/SQANTI/SQANTI3-4.2/sqanti3_qc.py {transcript_gtf} {ensembl_gtf} {ensembl_fasta} \
+		--polyA_motif_list {polya_file} \
+		--coverage {sj_files} \
+		--force_id_ignore \
+        --skipORF \
+        --report pdf \
+		--dir {outdir} \
+		--output {output}
+	'''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, conda_env='SQANTI3_v4.2', W='06:00', GB=50, n=1, print_cmd=False, stderr=outfile.replace('.pdf', '.err'), stdout=outfile.replace('.pdf', '.log'))
+
+# find /hpc/users/torred23/pipelines/projects/early-embryo/arion/isoseq/s05-talon.dir -name "sqanti*" | xargs rm -r
+
+#############################################
+########## 7. Get SJ support
+#############################################
+
+@follows(runSqanti)
+
+@transform('arion/isoseq/s05-talon.dir/*/gtf/sqanti/*.102_talon_junctions.txt',
+		   suffix('s.txt'),
+		   '_counts.tsv')
+
+def getSjCounts(infile, outfile):
+
+	# Run
+	run_r_job('get_sj_counts', infile, outfile, conda_env='env', W='06:00', GB=30, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# find /hpc/users/torred23/pipelines/projects/early-embryo/arion/isoseq/s05-talon.dir -name "*junction_counts*" | xargs rm
+
+#############################################
+########## 8. Filter GTF
+#############################################
+
+# @follows(getTalonAbundance, getSjCounts)
+
+@transform(getTalonGTF,
+		   regex(r'(.*)/(.*)/(.*).gtf'),
+		   add_inputs(r'\1/\2/sqanti/\3_junction_counts.tsv', r'\1/\3_abundance_filtered.tsv'),
+		   r'\1/\2/\3-SJ_filtered.gtf')
+
+def filterGTF(infiles, outfile):
+
+	# Run
+	run_r_job('filter_gtf', infiles, outfile, print_outfile=True, conda_env='env', W='00:30', GB=10, n=1, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))#, run_locally=False, print_outfile=False, print_cmd=False)
+
+# find arion/isoseq/s05-talon.dir -name "*SJ_filtered*" | xargs rm
+
+# rerun SQANTI on SJ filtered
+# create summary file with classification
+# fix classification: TALON NIC rename using SQANTI only if reassigned to NNC, TALON NNC is fine, TALON antisense rename to intergenic if all isoforms are intergenic according to SQANTI, TALON intergenic only when all relabeled to antisense by SQANTI
+#############################################
+########## 9. Split transcript GTF
+#############################################
+
+# @follows(getTalonGTF, filterGTF)
+
+@subdivide('arion/isoseq/s05-talon.dir/*/gtf/*.gtf',
+		   regex(r'(.*)/gtf/(.*talon)(.*).gtf'),
+		   add_inputs(r'\1/*abundance_filtered.tsv'),
+		   r'\1/gtf/split\3/\2\3_*.gtf',
+		   r'\1/gtf/split\3/\2\3_{transcript_class}.gtf')
+
+def splitTranscriptGTF(infiles, outfiles, outfileRoot):
+
+	# Run
+	run_r_job('split_transcript_gtf', infiles, outfileRoot, conda_env='env', W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+
+# find arion/isoseq/s05-talon.dir/ -name "*split*" | xargs rm -r
+
+#############################################
+########## 10. Sort and index
+#############################################
+
+# @follows(splitTranscriptGTF)
+
+@transform('arion/isoseq/s05-talon.dir/*/gtf/split*/*.gtf',
+		   suffix('.gtf'),
+		   '.sorted.gtf')
+
+def indexGTF(infile, outfile):
+
+	# Command
+	cmd_str = ''' igvtools sort -m 5000000 {infile} {outfile} && igvtools index {outfile} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, conda_env=False, modules=['igvtools/2.3.32'], W='00:15', GB=20, n=1, print_outfile=False, print_cmd=False)
+
+############################################
+######### 6. Get SJs
+############################################
+
+# @transform(getTalonGTF,
+# # @transform('arion/isoseq/s05-talon.dir/human/*.gtf',
+# 		   suffix('.gtf'),
+# 		   '_junctions.tsv')
+
+# def getJunctions(infile, outfile):
+
+# 	# Run
+# 	run_r_job('get_junctions', infile, outfile, conda_env='env', W='10:00', GB=20, n=5, run_locally=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+#############################################
+########## 11. Get FASTA
+#############################################
+
+# @transform(filterGTF,
+@transform('arion/isoseq/s05-talon.dir/*/gtf/*-SJ_filtered.gtf',
+		   regex(r'(.*)/(.*)/(.*)/(.*).gtf'),
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.dna_sm.primary_assembly.fa'),
+		   r'\1/\2/\3/\4.fasta')
+
+def getFASTA(infiles, outfile):
+
+	# Command
+	cmd_str = ''' gffread {infiles[0]} -g {infiles[1]} -w {outfile} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, modules=['gff/2021-02'], W='00:30', GB=10, n=1, stdout=outfile.replace('.fasta', '_fasta.log'), stderr=outfile.replace('.fasta', '_fasta.err'))
+
+#############################################
+########## 7. Transcript summary
+#############################################
+
+# @follows(runTalon)
+
+# @transform(filterTranscripts,
+# 		   regex(r'(.*)(_filtered_transcript)s.tsv'),
+# 		   add_inputs(r'\1.db'),
+# 		   r'\1\2_summary.tsv')
+
+# def getTalonSummary(infiles, outfile):
+	
+# 	# Read IDs
+# 	id_dataframe = pd.read_csv(infiles[0], header=None, names=['gene_ID', 'transcript_ID'])
+
+# 	# Initialize connection
+# 	conn = sqlite3.connect(infiles[1])
+
+# 	### Genes
+# 	# Gene annotation
+# 	gene_dataframe = pd.read_sql_query(""" SELECT DISTINCT ID as gene_ID, attribute, value FROM gene_annotations """, conn).pivot(index='gene_ID', columns='attribute', values='value')
+# 	gene_dataframe['gene_category'] = ['known' if rowData['gene_status'] == 'KNOWN' else ','.join([x for x in ['intergenic_novel', 'antisense_gene'] if rowData[x] == 'TRUE']) for index, rowData in gene_dataframe.iterrows()]
+# 	gene_dataframe['gene_source'] = gene_dataframe['gene_source'].fillna('talon')
+# 	gene_dataframe['gene_biotype'] = gene_dataframe['gene_biotype'].fillna('not_available')
+# 	gene_dataframe = gene_dataframe[['gene_id', 'gene_name', 'gene_biotype', 'gene_source', 'gene_category']].reset_index()
+
+# 	### Transcripts
+# 	# Novel transcript annotation
+# 	query = """ SELECT DISTINCT ID AS transcript_ID, attribute, value FROM transcript_annotations WHERE source == 'TALON' AND attribute LIKE '%transcript%' AND attribute NOT LIKE 'ISM-%' """
+# 	novel_transcript_dataframe = pd.read_sql_query(query, conn).pivot(index='transcript_ID', columns='attribute', values='value')
+# 	novel_transcript_dataframe['category'] = [','.join([key.replace('_transcript', '') for key, value in rowData.items() if value == 'TRUE']) for index, rowData in novel_transcript_dataframe.iterrows()]
+# 	novel_transcript_dataframe = novel_transcript_dataframe[['transcript_id', 'transcript_name', 'category']]
+# 	novel_transcript_dataframe['transcript_source'] = 'talon'
+# 	novel_transcript_dataframe['transcript_biotype'] = 'not_available'
+
+# 	# Known transcript annotation
+# 	known_transcript_dataframe = pd.read_sql_query(""" SELECT DISTINCT ID AS transcript_ID, attribute, value FROM transcript_annotations WHERE source != 'TALON' """, conn).pivot(index='transcript_ID', columns='attribute', values='value').drop(['ccds_id', 'tag', 'transcript_status', 'transcript_support_level', 'transcript_version', 'source'], axis=1)
+# 	known_transcript_dataframe['category'] = 'FSM'
+
+# 	# Concatenate
+# 	transcript_dataframe = pd.concat([x[['transcript_id', 'transcript_name', 'category', 'transcript_source', 'transcript_biotype']] for x in (known_transcript_dataframe, novel_transcript_dataframe)], axis=0).rename(columns={'category': 'transcript_category'}).reset_index()
+
+# 	# Add observed column
+# 	# observed_transcript_ids = pd.read_sql_query(""" SELECT DISTINCT transcript_ID FROM observed """, conn)['transcript_ID']
+# 	# transcript_dataframe['observed_transcript'] = [x in observed_transcript_ids for x in transcript_dataframe['transcript_ID']]
+
+# 	### Merge
+# 	result_dataframe = id_dataframe.merge(gene_dataframe, on='gene_ID', how='left').merge(transcript_dataframe, on='transcript_ID', how='left').drop(['gene_ID', 'transcript_ID'], axis=1)
+
+# 	# Close
+# 	conn.close()
+
+# 	# Write
+# 	result_dataframe.to_csv(outfile, sep='\t', index=False)
+
+# #############################################
+# ########## 8. Get SJs
+# #############################################
+
+# # @transform(getTalonGTF,
+# @transform('arion/isoseq/s05-talon.dir/*/all_transcripts/*.gtf',
+# 		   suffix('.gtf'),
+# 		   '_junctions.tsv')
+
+# def getJunctions(infile, outfile):
+
+# 	# Run
+# 	run_r_job('get_junctions', infile, outfile, conda_env='env', W='10:00', GB=20, n=5, run_locally=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# 1. add splice junction filtering from previous alignment here using code from illumina pipeline
+# 2. run featurecounts of bam files from STAR and get expression of monoexonic
+# 3. produce a whitelist using
+	# any multiexonic transcripts with SJ support
+		# all known
+		# all novel with >3 FL counts except ISMs
+	# monoexonic transcripts with minimum Illumina support (TBD)
+		# all known
+		# all novel with >5 FL counts
+
+#############################################
+########## 9. Get abundance
+#############################################
+
+# @follows(filterTranscripts)
+
+# @transform('arion/isoseq/s05-talon.dir/*/*.102_talon.db',
+# 		   regex(r'(.*)/(.*).db'),
+# 		   add_inputs(r'\1/\2_filtered_transcripts.tsv'),
+# 		   r'\1/\2_abundance_filtered.tsv')
+
+# def getTalonAbundance(infiles, outfile):
+	
+# 	# Get parameters
+# 	annotation_name = os.path.basename(infiles[0])[:-len('.db')]
+# 	genome_build = annotation_name.split('.')[1].replace('GRCm38', 'mm10').replace('GRCh38', 'hg38')
+# 	prefix = outfile[:-len('_talon_abundance_filtered.tsv')]
+
+# 	# Command
+# 	cmd_str = ''' talon_abundance \
+# 		--db {infiles[0]} \
+# 		--annot {annotation_name} \
+# 		--build {genome_build} \
+# 		--whitelist {infiles[1]} \
+# 		--o {prefix} '''.format(**locals())
+# 		# --observed \
+
+# 	# Run
+# 	run_job(cmd_str, outfile, W='01:00', n=1, GB=25, conda_env='talon', print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
 
 # find arion/isoseq/s05-talon.dir -name "*junctions.*" | xargs rm
 
@@ -853,24 +1049,24 @@ def getTalonAbundance(infiles, outfile):
 
 # @follows(filterTranscripts)
 
-@transform('arion/isoseq/s05-talon.dir/*/*.gtf',
-		   regex(r'(.*)/(.*)/(.*).gtf'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*.gtf'),
-		   r'\1/\2/\3_SJs-talon_SJs.tsv')
+# @transform('arion/isoseq/s05-talon.dir/*/*.gtf',
+# 		   regex(r'(.*)/(.*)/(.*).gtf'),
+# 		   add_inputs(r'arion/datasets/reference_genomes/\2/*.gtf'),
+# 		   r'\1/\2/\3_SJs-talon_SJs.tsv')
 
-def getTalonSJs(infiles, outfile):
+# def getTalonSJs(infiles, outfile):
 	
-	# Get parameters
-	prefix = outfile[:-len('-talon_SJs.tsv')]
+# 	# Get parameters
+# 	prefix = outfile[:-len('-talon_SJs.tsv')]
 
-	# Command
-	cmd_str = ''' talon_get_sjs \
-		--gtf {infiles[0]} \
-		--ref {infiles[1]} \
-		--outprefix {prefix} '''.format(**locals())
+# 	# Command
+# 	cmd_str = ''' talon_get_sjs \
+# 		--gtf {infiles[0]} \
+# 		--ref {infiles[1]} \
+# 		--outprefix {prefix} '''.format(**locals())
 
-	# Run
-	run_job(cmd_str, outfile, W='30:00', n=1, GB=10, conda_env='talon', print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+# 	# Run
+# 	run_job(cmd_str, outfile, W='30:00', n=1, GB=10, conda_env='talon', print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
 
 # find arion/isoseq/s05-talon.dir -name "*_SJs*"  | xargs rm
@@ -888,8 +1084,8 @@ def getTalonSJs(infiles, outfile):
 
 @follows(getFASTA)
 
-@transform('arion/isoseq/s05-talon.dir/*/*_talon.fasta',
-		   regex(r'(.*)/s05-talon.dir/(.)(.*)/(.*).fasta'),
+@transform('arion/isoseq/s05-talon.dir/*/gtf/*_talon-SJ_filtered.fasta',
+		   regex(r'(.*)/s05-talon.dir/(.)(.*)/gtf/(.*).fasta'),
 		   add_inputs(r'/sc/arion/work/torred23/libraries/CPAT3/CPAT-3.0.0/dat/*\3_Hexamer.tsv', r'/sc/arion/work/torred23/libraries/CPAT3/CPAT-3.0.0/dat/*\3_logitModel.RData'),
 		   r'\1/s06-cpat.dir/\2\3/\4-cpat.ORF_prob.best.tsv')
 
@@ -909,7 +1105,7 @@ def runCPAT(infiles, outfile):
 	'''.format(**locals())
 	
 	# Run
-	run_job(cmd_str, outfile, conda_env='env', W='06:00', GB=25, n=1, print_outfile=False, wait=False)
+	run_job(cmd_str, outfile, conda_env='env', W='10:00', GB=25, n=1, print_outfile=True, wait=False)
 
 #############################################
 ########## 2. Get results
@@ -939,8 +1135,8 @@ def formatCPAT(infile, outfile):
 ########## 3. Split GTF
 #############################################
 
-@subdivide(getTalonGTF,
-		   regex(r'(.*)/s05-talon.dir/(.*)/(.*).gtf'),
+@subdivide(filterGTF,
+		   regex(r'(.*)/s05-talon.dir/(.*)/gtf/(.*).gtf'),
 		   r'\1/s06-cpat.dir/\2/gtf/split/\3_??.gtf',
 		   r'\1/s06-cpat.dir/\2/gtf/split/\3_{chunk_nr}.gtf')
 
@@ -992,23 +1188,23 @@ def mergeGTF(infiles, outfile):
 ########## 6. Filter SJ transcripts
 #############################################
 
-# @subdivide(mergeGTF,
-@subdivide('arion/isoseq/s06-cpat.dir/*/gtf/*.cds.gtf',
-		   regex(r'(.*)/(.*?)/(gtf)/(.*).gtf'),
-		   add_inputs(r'arion/illumina/s04-alignment.dir/\2/all/gtf/*-all-SJ_filtered.gtf'),
-		   r'\1/\2/\3/\4-*_SJ_filtered.gtf',
-		   r'\1/\2/\3/\4-{transcript_type}_SJ_filtered.gtf')
+# # @subdivide(mergeGTF,
+# @subdivide('arion/isoseq/s06-cpat.dir/*/gtf/*.cds.gtf',
+# 		   regex(r'(.*)/(.*?)/(gtf)/(.*).gtf'),
+# 		   add_inputs(r'arion/illumina/s04-alignment.dir/\2/all/gtf/*-all-SJ_filtered.gtf'),
+# 		   r'\1/\2/\3/\4-*_SJ_filtered.gtf',
+# 		   r'\1/\2/\3/\4-{transcript_type}_SJ_filtered.gtf')
 
-def filterGTF(infiles, outfiles, outfileRoot):
+# def filterGTF(infiles, outfiles, outfileRoot):
 
-	# Loop
-	for transcript_type in ['all', 'novel']:
+# 	# Loop
+# 	for transcript_type in ['all', 'novel']:
 
-		# Get outfile
-		outfile = outfileRoot.format(**locals())
+# 		# Get outfile
+# 		outfile = outfileRoot.format(**locals())
 
-		# Run
-		run_r_job('filter_gtf', infiles, outfile, additional_params=transcript_type, conda_env='env', W='00:45', GB=15, n=1, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))
+# 		# Run
+# 		run_r_job('filter_gtf', infiles, outfile, additional_params=transcript_type, conda_env='env', W='00:45', GB=15, n=1, stdout=outfile.replace('.gtf', '.log'), stderr=outfile.replace('.gtf', '.err'))
 
 #######################################################
 #######################################################
@@ -1028,7 +1224,7 @@ def filterGTF(infiles, outfiles, outfileRoot):
 def translateORFs(infiles, outfile):
 
 	# Run
-	run_r_job('translate_orfs', infiles, outfile, conda_env='env', W="01:00", GB=15, n=1, stdout=outfile.replace('.fasta', '.log'), wait=True)
+	run_r_job('translate_orfs', infiles, outfile, conda_env='env', W="01:00", GB=15, n=1, stdout=outfile.replace('.fasta', '.log'), wait=False)
 
 #############################################
 ########## 2. Split
@@ -1125,8 +1321,8 @@ def mergePfamResults(infiles, outfile):
 
 @follows(getFASTA)
 
-@subdivide('arion/isoseq/s05-talon.dir/*/*_talon.fasta',
-		   regex(r'(.*)/s05-talon.dir/(.*)/(.*).fasta'),
+@subdivide('arion/isoseq/s05-talon.dir/*/gtf/*_talon-SJ_filtered.fasta',
+		   regex(r'(.*)/s05-talon.dir/(.*)/gtf/(.*).fasta'),
 		   r'\1/s08-repeatmasker.dir/\2/fasta/*.fasta.*',
 		   r'\1/s08-repeatmasker.dir/\2/fasta/\3.fasta.100')
 
@@ -1166,9 +1362,10 @@ def runRepeatMasker(infile, outfile):
 	cmd_str = ''' cd {outdir} && RepeatMasker -species "{species}" -pa 64 -dir . {infile}'''.format(**locals())
 	
 	# Run
-	run_job(cmd_str, outfile, modules=['repeatmasker/4.1.1'], W='03:00', GB=3, n=10, print_outfile=False, stdout=outfile.replace('.out', '.log'), stderr=outfile.replace('.out', '.err'))
+	run_job(cmd_str, outfile, modules=['repeatmasker/4.1.1'], W='06:00', GB=3, n=10, print_outfile=True, stdout=outfile.replace('.out', '.log'), stderr=outfile.replace('.out', '.err'))
 
 # find arion/isoseq/s08-repeatmasker.dir/*/split -name "*.log" | jsc
+# find arion/isoseq/s08-repeatmasker.dir/*/split -name "*.err" | xargs wc -l
 
 #############################################
 ########## 3. Filter
@@ -1230,17 +1427,18 @@ def getChromosomeSizes(infile, outfile):
 	run_job(cmd_str, outfile, modules=['python/3.8.2'], W='00:05', GB=10, n=11, print_outfile=False)
 
 #############################################
-########## 3. Get known transcript BED
+########## 3. Get excluded regions
 #############################################
+# excludes intergenic and gapped regions in chromosomes
+@transform('arion/datasets/reference_genomes/*/*.102.gtf',
+		   regex(r'(.*).(...).gtf'),
+		   add_inputs(r'\1*dna_sm.primary_assembly_gaps.bed'),
+		   r'\1.\2_to_exclude_intergenic.bed')
 
-@transform('arion/datasets/reference_genomes/*/*.gtf',
-		   suffix('.gtf'),
-		   '_transcript.bed')
-
-def getKnownTranscriptBed(infile, outfile):
+def getExcludedRegions(infiles, outfile):
 
 	# Run
-	run_r_job('gtf_to_bed', infile, outfile, additional_params='transcript', conda_env='env', W='00:05', GB=10, n=1)#, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
+	run_r_job('get_excluded_regions', infiles, outfile, conda_env='env', W='00:10', GB=10, n=1)#, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
 
 #############################################
 ########## 4. Shuffle transcripts
@@ -1250,7 +1448,7 @@ def getKnownTranscriptBed(infile, outfile):
 
 @subdivide('arion/isoseq/s09-evolutionary_conservation.dir/*/bed/transcript/*.bed',
 		   regex(r'(.*)/(.*)/bed/transcript/(.*).bed'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*.chromsizes', r'arion/datasets/reference_genomes/\2/*_transcript.bed'),
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*renamed.chromsizes', r'arion/datasets/reference_genomes/\2/*to_exclude_intergenic.bed'),
 		   r'\1/\2/bed_shuffled/*/transcript/\3-shuffled*.bed',
 		   r'\1/\2/bed_shuffled/{shuffle_type}/transcript/\3-shuffled{shift_nr}-{shuffle_type}.bed')
 
@@ -1275,7 +1473,7 @@ def shuffleTranscripts(infiles, outfiles, outfileRoot):
 			outfile = outfileRoot.format(**locals())
 
 			# Command
-			cmd_str = ''' bedtools shuffle {shuffle_parameters} -i {infiles[0]} -g {infiles[1]} > {outfile} '''.format(**locals()) # -chrom
+			cmd_str = ''' bedtools shuffle {shuffle_parameters} -i {infiles[0]} -g {infiles[1]} > {outfile} \n'''.format(**locals()) # -chrom
 			
 			# Run
 			run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:05', GB=5, n=1, print_cmd=False)
@@ -1340,16 +1538,16 @@ def mergeConservationScores(infiles, outfile):
 ########## 8. Get shuffled N content
 #############################################
 
-# @transform(getShuffledExons,
-@transform('arion/isoseq/s09-evolutionary_conservation.dir/human/bed_shuffled/intergenic/exon/Homo_sapiens.GRCh38.102_talon_01-exon-shuffled1-intergenic.bed',
-		   regex(r'(.*)/(.*)/(bed_shuffled/.*).bed'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*dna_sm.primary_assembly.fa'),
-		   r'\1/\2/\3_nucleotide_content.tsv')
+# # @transform(getShuffledExons,
+# @transform('arion/isoseq/s09-evolutionary_conservation.dir/human/bed_shuffled/intergenic/exon/Homo_sapiens.GRCh38.102_talon_01-exon-shuffled1-intergenic.bed',
+# 		   regex(r'(.*)/(.*)/(bed_shuffled/.*).bed'),
+# 		   add_inputs(r'arion/datasets/reference_genomes/\2/*dna_sm.primary_assembly.fa'),
+# 		   r'\1/\2/\3_nucleotide_content.tsv')
 
-def getShuffledN(infiles, outfile):
+# def getShuffledN(infiles, outfile):
 
-	# Run
-	run_r_job('get_shuffled_n', infiles, outfile, conda_env='env', W='00:30', GB=10, n=1, ow=True)#, run_locally=False, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
+# 	# Run
+# 	run_r_job('get_shuffled_n', infiles, outfile, conda_env='env', W='00:30', GB=10, n=1, ow=True)#, run_locally=False, stdout=outfile.replace('.gp', '.log'), stderr=outfile.replace('.gp', '.err'))
 
 
 #######################################################
@@ -1642,15 +1840,15 @@ def makeBlastDatabase(infiles, outfile):
 
 # @subdivide('arion/isoseq/s05-talon.dir/*/*_talon.fasta',
 		#    regex(r'(.*)/s05-talon.dir/(.*)/(.*).fasta'),
-@subdivide('arion/illumina/s04-alignment.dir/human/all/RSEM/index/*.transcripts.fa',
-		   regex(r'arion/illumina/s04-alignment.dir/(.*)/all/RSEM/index/(.*).fa'),
+@subdivide('arion/isoseq/s05-talon.dir/human/gtf/Homo_sapiens.GRCh38.102_talon-SJ_filtered.fasta',
+		   regex(r'arion/isoseq/s05-talon.dir/(.*)/gtf/(.*).fasta'),
 		   r'arion/isoseq/s11-blast.dir/results/\1/fasta/*.fa.*',
 		   r'arion/isoseq/s11-blast.dir/results/\1/fasta/\2.fa.1')
 
 def splitBlastFASTA(infile, outfiles, outfileRoot):
 
 	# Get number
-	N = 1000 if 'human' in outfileRoot else 100#outfileRoot.split('.')[-1]
+	N = 5000 if 'human' in outfileRoot else 100#outfileRoot.split('.')[-1]
 
 	# Get temp filename
 	outdir = os.path.dirname(outfileRoot)
@@ -1667,7 +1865,7 @@ def splitBlastFASTA(infile, outfiles, outfileRoot):
 #############################################
 
 # @transform('/hpc/users/torred23/pipelines/projects/early-embryo/test.fasta',
-@transform('arion/isoseq/s11-blast.dir/results/human/fasta/*.fa.*',
+@transform('arion/isoseq/s11-blast.dir/results/human/fasta/*.fasta*',
 		   regex(r'(.*)/s11-blast.dir/results/(.*)/fasta/(.*)'),
 		   add_inputs(makeBlastDatabase),
 		   r'\1/s11-blast.dir/results/\2/split/\3.blast_results.tsv.gz')
@@ -1682,7 +1880,7 @@ def runBLAST(infiles, outfile):
 	cmd_str = ''' blastn -query {infiles[0]} -db {db} -out {outfile_tsv} -task megablast -outfmt 6 -html -num_threads 1 -evalue 1 && gzip {outfile_tsv}'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, print_outfile=False, modules=['blast/2.9.0+'], W='06:00', GB=50, n=6, q='premium', stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
+	run_job(cmd_str, outfile, print_outfile=False, modules=['blast/2.9.0+'], W='06:00', GB=50, n=5, q='sla', stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
 	# run_job(cmd_str, outfile, print_outfile=False, modules=['blast/2.9.0+'], W='03:00', GB=None, R='himem', q='premium', stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
 
 # find arion/isoseq/s11-blast.dir/results/human/split -name "*.log" | jsc
@@ -1730,14 +1928,14 @@ def mergeBLAST(infiles, outfile):
 ########## 1. Create summary
 #############################################
 
-@collate((getTalonSummary, formatCPAT, mergePfamResults, mergeRepeatMasker),
-		 regex(r'(.*)/.*.dir/(.*?)/.*'),
-		 r'\1/summary.dir/\2-isoseq_summary.tsv')
+# @collate((getTalonSummary, formatCPAT, mergePfamResults, mergeRepeatMasker),
+# 		 regex(r'(.*)/.*.dir/(.*?)/.*'),
+# 		 r'\1/summary.dir/\2-isoseq_summary.tsv')
 
-def getTranscriptSummary(infiles, outfile):
+# def getTranscriptSummary(infiles, outfile):
 
-	# Run
-	run_r_job('get_transcript_summary', infiles, outfile, conda_env='env', W='00:15', GB=10, n=1)
+# 	# Run
+# 	run_r_job('get_transcript_summary', infiles, outfile, conda_env='env', W='00:15', GB=10, n=1)
 
 # #######################################################
 # #######################################################

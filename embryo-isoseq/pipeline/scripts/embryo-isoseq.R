@@ -99,11 +99,24 @@ merge_sjs <- function(infiles, outfile) {
         df <- fread(x);
         colnames(df) <- sj_colnames;
         return(df)
-    }) %>% bind_rows %>% filter(strand != 0) %>% group_by(chr, intron_start, intron_end, strand, intron_motif, annotated) %>% summarize(tot_unique_junction_reads=sum(unique_junction_reads), tot_multimapping_junction_reads=sum(multimapping_junction_reads), max_spliced_alignment_overhang=max(max_spliced_alignment_overhang))
+    }) %>% bind_rows %>% group_by(chr, intron_start, intron_end, strand, intron_motif, annotated) %>% summarize(tot_unique_junction_reads=sum(unique_junction_reads), tot_multimapping_junction_reads=sum(multimapping_junction_reads), max_spliced_alignment_overhang=max(max_spliced_alignment_overhang))
+#  %>% filter(strand != 0)
 
-    # Merge and filter
-    min_reads <- 3
-    merged_dataframe <- sj_dataframe %>% left_join(annotation_dataframe, by=c('chr', 'intron_start', 'intron_end', 'strand', 'intron_motif')) %>% filter((tot_unique_junction_reads >= min_reads | tot_multimapping_junction_reads >= min_reads) | annotated_ensembl == 1) %>% select(-annotated_ensembl)
+    ### NEW
+    # Fix strands
+    strand_dataframe <- lapply(c(1, 2), function(x) {
+        sj_dataframe %>% filter(strand==0) %>% mutate(strand=x)
+    }) %>% bind_rows
+
+    # Concatenate
+    result_dataframe <- rbind(sj_dataframe %>% filter(strand != 0), strand_dataframe)
+    
+    # Merge
+    merged_dataframe <- result_dataframe %>% left_join(annotation_dataframe, by=c('chr', 'intron_start', 'intron_end', 'strand', 'intron_motif')) %>% select(-annotated_ensembl)
+    ###
+
+    # Merge
+    # merged_dataframe <- sj_dataframe %>% left_join(annotation_dataframe, by=c('chr', 'intron_start', 'intron_end', 'strand', 'intron_motif')) %>% select(-annotated_ensembl)
 
     # Write
     fwrite(merged_dataframe, file=outfile, sep='\t', col.names=FALSE)
@@ -339,6 +352,119 @@ get_junctions <- function(infile, outfile) {
 
 }
 
+#############################################
+########## 7. Get SJ support
+#############################################
+
+get_sj_counts <- function(infile, outfile) { # rewrite to count number of samples with coverage ≥1
+
+    # Read junctions
+    junction_dataframe <- fread(infile) %>% rename('transcript_id'='isoform')
+
+    # Get SJ cols
+    sj_dataframe <- lapply(c('unique', 'multi'), function(x) {
+        columns <- colnames(junction_dataframe)[grepl(glue('SJ.out_{x}'), colnames(junction_dataframe))]
+        count_dataframe <- as.data.frame(junction_dataframe)[,c('transcript_id', columns)] %>% group_by(transcript_id) %>% summarize(across(everything(), min)) %>% column_to_rownames('transcript_id')
+        count_dataframe %>% apply(1, max) %>% as.data.frame %>% rename('max_min_sj'='.') %>% rownames_to_column('transcript_id') %>% mutate(mapping_type=glue('max_min_{x}'))
+    }) %>% bind_rows %>% pivot_wider(id_cols = transcript_id, names_from=mapping_type, values_from=max_min_sj)
+
+    # Get total counts
+    count_dataframe <- junction_dataframe %>% group_by(transcript_id) %>% summarize(min_total_unique=min(total_coverage_unique), min_total_multi=min(total_coverage_multi))
+
+    # Add total
+    merged_dataframe <- sj_dataframe %>% left_join(count_dataframe, by='transcript_id')
+
+    # Write
+    fwrite(merged_dataframe, file=outfile, sep='\t')
+
+}
+
+#############################################
+########## 8. Filter GTF
+#############################################
+
+filter_gtf <- function(infiles, outfile) { # rewrite to filter as above
+
+    # Read GTF
+    gtf <- rtracklayer::import(infiles[1])
+
+    # Read SJ counts
+    sj_dataframe <- fread(infiles[2])
+
+    # Read FL counts
+    abundance_dataframe <- fread(infiles[3])
+    abundance_dataframe$fl_counts <- apply(abundance_dataframe[,12:ncol(abundance_dataframe)], 1, sum)
+
+    # Get SJ-supported multiexonic transcripts
+    sj_multiexon_transcripts <- sj_dataframe %>% filter(max_min_unique >= 3) %>% pull(transcript_id)
+    # length(sj_multiexon_transcripts)
+
+    # Get PB-supported monoexonic transcripts
+    pb_monoexon_transcripts <- abundance_dataframe %>% filter(transcript_novelty=='Known' & n_exons==1 & fl_counts >=1) %>% pull(annot_transcript_id)
+    # length(pb_monoexon_transcripts)
+
+    # Get ISMs
+    ism_transcripts <- abundance_dataframe %>% filter(transcript_novelty == 'ISM') %>% pull(annot_transcript_id)
+    # length(ism_transcripts)
+
+    # Merge
+    transcript_ids <- setdiff(c(sj_multiexon_transcripts, pb_monoexon_transcripts), ism_transcripts)
+    # length(transcript_ids)
+
+    # Filter GTF
+    gtf_filtered <- gtf[gtf$type != 'gene' & gtf$transcript_id %in% transcript_ids]
+
+    # Write
+    rtracklayer::export(gtf_filtered, outfile)
+
+}
+
+#############################################
+########## 8. Split transcript GTF
+#############################################
+
+split_transcript_gtf <- function(infiles, outfileRoot) {
+
+    # Read GTF
+    gtf <- rtracklayer::import(infiles[1])
+    gtf <- gtf[!gtf$type =='gene',]
+
+    # Read abundance
+    abundance_dataframe <- fread(infiles[2])
+    # abundance_dataframe$fl_counts <- rowSums(abundance_dataframe[,12:ncol(abundance_dataframe)])
+    # abundance_dataframe <- abundance_dataframe %>% filter(fl_counts >= 3)
+
+    # Get transcript classes
+    transcript_classes <- split(abundance_dataframe$annot_transcript_id, abundance_dataframe$transcript_novelty)
+
+    # Fix known
+    all_transcripts <- unique(gtf$transcript_id)
+    transcript_classes$Known <- all_transcripts[grepl('ENS', all_transcripts)]
+
+    # Write transcript only
+    gtf_transcript <- gtf[gtf$type == 'transcript',]
+    rtracklayer::export(gtf_transcript, gsub('\\{transcript_class\\}', 'transcript', outfileRoot))
+
+    # Loop
+    for (transcript_class in names(transcript_classes)) {
+        
+        # Get transcripts
+        transcript_ids <- transcript_classes[[transcript_class]]
+        
+        # Filter
+        gtf_filtered <- gtf[gtf$transcript_id %in% transcript_ids,]
+        
+        # Get outfile
+        outfile <- glue(outfileRoot)
+        
+        # Write
+        if (length(gtf_filtered) > 0) {
+            rtracklayer::export(gtf_filtered, outfile)
+        }
+
+    }
+}
+
 #######################################################
 #######################################################
 ########## S6. CPAT
@@ -490,28 +616,28 @@ merge_gtf <- function(infiles, outfile) {
 ########## 6. Filter
 #############################################
 
-filter_gtf <- function(infiles, outfile, transcript_type) {
+# filter_gtf <- function(infiles, outfile, transcript_type) {
     
-    # Read GTF
-    gtf <- rtracklayer::import(infiles[1])
+#     # Read GTF
+#     gtf <- rtracklayer::import(infiles[1])
 
-    # Get transcript IDs
-    transcript_ids <- rtracklayer::import(infiles[2])$transcript_id %>% unique
+#     # Get transcript IDs
+#     transcript_ids <- rtracklayer::import(infiles[2])$transcript_id %>% unique
 
-    # Filter
-    if (transcript_type == 'all') {
-        filtered_transcript_ids <- transcript_ids
-    } else if (transcript_type == 'novel') {
-        filtered_transcript_ids <- transcript_ids[grepl('TALON', transcript_ids)]
-    }
+#     # Filter
+#     if (transcript_type == 'all') {
+#         filtered_transcript_ids <- transcript_ids
+#     } else if (transcript_type == 'novel') {
+#         filtered_transcript_ids <- transcript_ids[grepl('TALON', transcript_ids)]
+#     }
 
-    # Filter GTF
-    gtf_filtered <- gtf[gtf$transcript_id %in% filtered_transcript_ids,]
+#     # Filter GTF
+#     gtf_filtered <- gtf[gtf$transcript_id %in% filtered_transcript_ids,]
     
-    # Write
-    rtracklayer::export(gtf_filtered, outfile, format='gtf')
+#     # Write
+#     rtracklayer::export(gtf_filtered, outfile, format='gtf')
 
-}
+# }
 
 #######################################################
 #######################################################
@@ -615,7 +741,31 @@ gtf_to_bed <- function(infile, outfile, feature_type) {
 }
 
 #############################################
-########## 2. Get random background
+########## 3. Get excluded regions
+#############################################
+
+get_excluded_regions <- function(infiles, outfile) {
+
+    # Read
+    gtf <- rtracklayer::readGFF(infiles[1])
+
+    # Read exons
+    exon_dataframe <- gtf %>% filter(type=='exon') %>% mutate(seqid=paste0('chr', seqid), start=format(start-1, scientific=FALSE, trim=TRUE), end=format(end, scientific=FALSE, trim=TRUE), score=0, id=paste0(transcript_id, '_exon', exon_number), strand='*') %>% select(seqid, start, end, id, score, strand)
+
+    # Read gaps
+    gap_dataframe <- rtracklayer::import(infiles[2]) %>% as.data.frame %>% select(-width) %>% rename('seqid'='seqnames') %>% group_by(seqid) %>% mutate(score=0, nr=1:n(), id=glue('chr{seqid}_gap{nr}')) %>% select(seqid, start, end, id, score, strand)
+
+    # Concatenate
+    result_dataframe <- rbind(exon_dataframe, gap_dataframe)
+
+    # Write
+    fwrite(result_dataframe, file=outfile, sep='\t', col.names=FALSE)
+
+}
+
+
+#############################################
+########## 5. Get random background
 #############################################
 
 get_shuffled_exons <- function(infiles, outfile) {
@@ -636,7 +786,7 @@ get_shuffled_exons <- function(infiles, outfile) {
 }
 
 #############################################
-########## 5. Merge
+########## 7. Merge
 #############################################
 
 merge_conservation_scores <- function(infiles, outfile) {
@@ -655,35 +805,35 @@ merge_conservation_scores <- function(infiles, outfile) {
 ########## 8. Get shuffled N content
 #############################################
 
-get_shuffled_n <- function(infiles, outfile) {
+# get_shuffled_n <- function(infiles, outfile) {
     
-    # Library
-    require(bedr)
+#     # Library
+#     require(bedr)
 
-    # Read ranges
-    bed_ranges <- rtracklayer::import(infiles[1])
+#     # Read ranges
+#     bed_ranges <- rtracklayer::import(infiles[1])
 
-    # Convert to dataframe
-    bed_dataframe <- bed_ranges %>% as.data.frame %>% rename('chr'='seqnames') %>% mutate(chr=gsub('chr', '', chr)) %>% arrange(chr, start)
+#     # Convert to dataframe
+#     bed_dataframe <- bed_ranges %>% as.data.frame %>% rename('chr'='seqnames') %>% mutate(chr=gsub('chr', '', chr)) %>% arrange(chr, start)
 
-    # Get fasta
-    range_fasta <- get.fasta(bed_dataframe, fasta=infiles[2], check.chr=FALSE)
+#     # Get fasta
+#     range_fasta <- get.fasta(bed_dataframe, fasta=infiles[2], check.chr=FALSE)
 
-    # Get counts
-    count_dataframe <- apply(range_fasta, 1, function(x) {
-        nucleotide_counts <- table(strsplit(toupper(x['sequence']), "")[[1]])
-        suppressWarnings(data.frame(coordinates=x['index'], nucleotide_counts))
-    }) %>% bind_rows %>% rename('nucleotide'='Var1', 'count'='Freq')
+#     # Get counts
+#     count_dataframe <- apply(range_fasta, 1, function(x) {
+#         nucleotide_counts <- table(strsplit(toupper(x['sequence']), "")[[1]])
+#         suppressWarnings(data.frame(coordinates=x['index'], nucleotide_counts))
+#     }) %>% bind_rows %>% rename('nucleotide'='Var1', 'count'='Freq')
 
-    # Get fraction per sequence
-    fraction_dataframe <- bed_dataframe %>% mutate(coordinates=glue('{chr}:{start}-{end}'), transcript_shuffle=gsub('(.*)_exon.*?-(.*)', '\\1_\\2', name)) %>% 
-        select(coordinates, transcript_shuffle) %>% inner_join(count_dataframe, by='coordinates') %>% group_by(transcript_shuffle, nucleotide) %>% summarize(nucleotide_count=sum(count)) %>%
-        mutate(nucleotide_percent=prop.table(nucleotide_count)) %>% pivot_wider(id_cols = transcript_shuffle, names_from = nucleotide, values_from = nucleotide_percent, values_fill = 0)
+#     # Get fraction per sequence
+#     fraction_dataframe <- bed_dataframe %>% mutate(coordinates=glue('{chr}:{start}-{end}'), transcript_shuffle=gsub('(.*)_exon.*?-(.*)', '\\1_\\2', name)) %>% 
+#         select(coordinates, transcript_shuffle) %>% inner_join(count_dataframe, by='coordinates') %>% group_by(transcript_shuffle, nucleotide) %>% summarize(nucleotide_count=sum(count)) %>%
+#         mutate(nucleotide_percent=prop.table(nucleotide_count)) %>% pivot_wider(id_cols = transcript_shuffle, names_from = nucleotide, values_from = nucleotide_percent, values_fill = 0)
 
-    # Write
-    fwrite(fraction_dataframe, file=outfile, sep='\t')
+#     # Write
+#     fwrite(fraction_dataframe, file=outfile, sep='\t')
 
-}
+# }
 
 #######################################################
 #######################################################
