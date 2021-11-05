@@ -527,6 +527,20 @@ def mergeScaledBigWig(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, modules=['wiggletools/1.2', 'ucsc-utils/2020-03-17'], W='00:30', n=1, GB=10, print_cmd=False, stdout=outfile.replace('.bw', '.log'), stderr=outfile.replace('.bw', '.err'))
 
+#############################################
+########## 6. Consensus peaks
+#############################################
+
+# @transform(getPeakCounts,
+@transform('arion/atacseq/s05-counts.dir/human/human-atacseq_peak_counts.rda',
+		   suffix('_peak_counts.rda'),
+		   '_consensus_peaks.bed')
+
+def getConsensusPeaks(infile, outfile):
+
+	# Run
+	run_r_job('get_consensus_peaks', infile, outfile, conda_env='env', W='00:30', GB=10, n=1, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
+
 #######################################################
 #######################################################
 ########## S6. TSS coverage
@@ -1208,8 +1222,8 @@ def plotPhyloProfile(infile, outfile):
 		--samplesLabel "" \
 		--colors "#dbdbdb" "#6BAED6" "#78C679" "#EE6A50" "#66C2A4" "#E9967A" \
 		-out {outfile} \
+		--outFileNameData {data_outfile}
 	'''.format(**locals())
-		# --outFileNameData {data_outfile}
 		# --plotTitle "Human isoform conservation" \
 
 	# Run

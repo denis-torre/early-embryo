@@ -83,6 +83,27 @@ get_size_factors <- function(infile, outfile) {
 
 }
 
+#############################################
+########## 6. Consensus peaks
+#############################################
+
+get_consensus_peaks <- function(infile, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(DiffBind))
+
+    # Load
+    load(infile)
+
+    # Get peaks
+    peak_dataframe <- dba.peakset(atac, bRetrieve=TRUE) %>% as.data.frame %>% mutate(id=paste0('atac_peak_', 1:n()), score=100) %>% select(seqnames, start, end, id, score, strand) %>% mutate(seqnames=gsub('chr', '', seqnames))
+
+    # Write
+    fwrite(peak_dataframe, file=outfile, sep='\t', col.names=FALSE)
+
+
+}
+
 #######################################################
 #######################################################
 ########## S5. TSS coverage
