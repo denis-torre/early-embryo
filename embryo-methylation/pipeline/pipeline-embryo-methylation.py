@@ -243,10 +243,10 @@ def runBismark(infiles, outfile):
 ########## 3. Extract methylation
 #############################################
 
-@transform('arion/methylation/s03-bismark.dir/human/results/*8C*/*.bam',
+@transform('arion/methylation/s03-bismark.dir/human/results/*/*.bam',
 		   regex(r'(.*)/(.*).bam'),
 		   add_inputs('arion/methylation/s03-bismark.dir/human/genome/'),
-		   r'\1/methylation_v2/\2_splitting_report.txt')
+		   r'\1/methylation/\2_splitting_report.txt')
 
 def extractMethylation(infiles, outfile):
 	
@@ -258,11 +258,9 @@ def extractMethylation(infiles, outfile):
 	cmd_str = '''  bismark_methylation_extractor --gzip --bedGraph --output {output_dir} {infiles[0]} --cytosine_report --genome_folder {genome_folder} --parallel 10 '''.format(**locals()) # --parallel 4 
 
 	# Run
-	run_job(cmd_str, outfile, print_cmd=False, modules=['bismark/0.22.3', 'bowtie2/2.4.1', 'samtools/1.13'], W='06:00', GB=5, n=5, stdout=outfile.replace('.txt', '.log'), stderr=outfile.replace('.txt', '.err'))#, print_outfile=False, print_cmd=False)
+	run_job(cmd_str, outfile, print_cmd=False, modules=['bismark/0.22.3', 'bowtie2/2.4.1', 'samtools/1.13'], W='30:00', GB=5, n=5, stdout=outfile.replace('.txt', '.log'), stderr=outfile.replace('.txt', '.err'))#, print_outfile=False, print_cmd=False)
 
 # find arion/methylation/s03-bismark.dir/human/results/*/methylation -name "*.log" | jsc
-# find arion/methylation/s03-bismark.dir/human/results/*/methylation_v2 -name "*.log" | jsc
-# find arion/methylation/s03-bismark.dir/human/results/*/methylation_v2 | xargs rm -r
 
 #############################################
 ########## 4. Report links
@@ -272,7 +270,7 @@ def extractMethylation(infiles, outfile):
 
 @transform(('arion/methylation/s03-bismark.dir/human/results/*/*_report.txt', 'arion/methylation/s03-bismark.dir/human/results/*/methylation/*_report.txt', 'arion/methylation/s03-bismark.dir/human/results/*/*.bam'),
 		   regex(r'(.*)/results/.*/(.*)'),
-		   r'\1/summary/links/\2')
+		   r'\1/reports/links/\2')
 
 def linkBismarkReports(infile, outfile):
 
@@ -294,9 +292,9 @@ def linkBismarkReports(infile, outfile):
 
 # @follows(runBismark)
 
-@transform('arion/methylation/s03-bismark.dir/human/summary/links',
+@transform('arion/methylation/s03-bismark.dir/human/reports/links',
 		   regex(r'(.*)/links'),
-		   r'\1/reports/')
+		   r'\1/split/')
 
 def createBismarkReport(infile, outfile):
 
@@ -313,12 +311,21 @@ def createBismarkReport(infile, outfile):
 ########## 6. Summary report
 #############################################
 
-@transform('arion/methylation/s03-bismark.dir/human/summary/reports',
-		   regex(r'(.*).suffix'),
-		   r'\1.new_suffix')
+@collate('arion/methylation/s03-bismark.dir/human/reports/links/*.bam',
+		 regex(r'(.*)/links/.*.bam'),
+		 r'\1/summary/bismark_summary_report.html')
 
-def createBismarkSummary(infile, outfile):
-	print(infile, outfile)
+def createBismarkSummary(infiles, outfile):
+
+	# Parameters
+	infiles_str = ' '.join(infiles)
+	basename = outfile[:-len('.html')]
+
+	# Command
+	cmd_str = ''' bismark2summary {infiles_str} --basename {basename} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, print_cmd=False, ow=False, modules=['bismark/0.22.3'], W='00:15', GB=10, n=1, stdout=os.path.join(outfile, 'job.log'), stderr=os.path.join(outfile, 'job.err'))
 
 #######################################################
 #######################################################
@@ -327,68 +334,191 @@ def createBismarkSummary(infile, outfile):
 #######################################################
 
 #############################################
-########## 1. Average replicates
+########## 1. Tile
 #############################################
 
-@collate('arion/methylation/s03-bismark.dir/human/results/*/methylation/*.bedGraph.gz',
-		 regex(r'(.*)/s03-bismark.dir/(.*)/results/(human_.*?_.).*/.*.gz'),
-		 r'\1/s04-methylation.dir/\2/bedgraph_split/\3.bedgraph.gz')
+@transform('arion/methylation/s03-bismark.dir/human/results/*/methylation/*.CpG_report.txt.gz',
+		   regex(r'(.*)/s03-bismark.dir/(.*)/results/(.*)/methylation/.*.gz'),
+		   r'\1/s04-methylation.dir/\2/tiled_100bp/\3-tiled_methylation.tsv.gz')
 
-def mergeReplicates(infiles, outfile):
-
-	# Check
-	if len(infiles) == 1:
-
-		# Create directory
-		outdir = os.path.dirname(outfile)
-		if not os.path.exists(outdir):
-			os.makedirs(outdir)
-
-		# Copy
-		os.system('cp {infiles[0]} {outfile}'.format(**locals()))
-
-	else:
-
-		# Run
-		run_r_job('get_average_methylation', infiles, outfile, conda_env='env', W='00:30', GB=10, n=1, stdout=outfile.replace('.bedgraph.gz', '.log'), stderr=outfile.replace('.bedgraph.gz', '.err'))#, run_locally=False, print_outfile=False, print_cmd=False)
-
-# find arion/methylation/s04-methylation.dir/human/bedgraph_split -name "*.log" | jsc
-# find arion/methylation/s04-methylation.dir/human/bedgraph_split -name "*.err" | xargs wc -l
-
-#############################################
-########## 2. Average samples
-#############################################
-
-@collate(mergeReplicates,
-		 regex(r'(.*)/bedgraph_split/(.*)_..bedgraph.gz'),
-		 r'\1/bedgraph/\2.bedgraph.gz')
-
-def mergeSamples(infiles, outfile):
+def tileMethylation(infile, outfile):
 
 	# Run
-	run_r_job('get_average_methylation', infiles, outfile, conda_env='env', W='00:30', GB=10, n=1, stdout=outfile.replace('.bedgraph.gz', '.log'), stderr=outfile.replace('.bedgraph.gz', '.err'))#, run_locally=False, print_outfile=False, print_cmd=False)
+	run_r_job('tile_methylation', infile, outfile, modules=['R/4.0.3'], W='03:00', GB=30, n=3, stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
 
-# find arion/methylation/s04-methylation.dir/human/bedgraph -name "*.log" | jsc
-# find arion/methylation/s04-methylation.dir/human/bedgraph -name "*.err" | xargs wc -l
+# rm -r /hpc/users/torred23/pipelines/projects/early-embryo/arion/methylation/s04-methylation.dir
 
 #############################################
-########## 3. BigWig
+########## 2. Average tiled
 #############################################
 
-@transform(mergeSamples,
-		   regex(r'(.*)/bedgraph/(.*).bedgraph.gz'),
-		   r'\1/bw/\2.bw')
+@collate(tileMethylation,
+		 regex(r'(.*)/(.*)/(.*)/(human_.*?)_.*.tsv.gz'),
+		 add_inputs(r'arion/datasets/reference_genomes/\2/*.chrom.sizes'),
+		 r'\1/\2/\3/bw/\4.bw')
 
-def convertBigWig(infile, outfile):
+def averageTiledMethylation(infiles, outfile):
 
-	# Temp
-	tempfile = outfile.replace('.bw', '.sorted.tmp.bedgraph')
-
-	# Command
-	cmd_str = """ zcat {infile} | sort -k1,1 -k2,2n > {tempfile} && bedGraphToBigWig {tempfile} arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly_renamed.nochr.chromsizes {outfile} && rm {tempfile} """.format(**locals())
+	# Split
+	chromsize_file = infiles[0][1]
+	infiles = [x[0] for x in infiles]
 
 	# Run
-	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:30', n=1, GB=10, print_cmd=False, stdout=outfile.replace('.bw', '.log'), stderr=outfile.replace('.bw', '.err'))
+	run_r_job('average_tiled_methylation', infiles, outfile, modules=['R/4.0.3'], additional_params=chromsize_file, W='03:00', GB=50, n=1, stdout=outfile.replace('.bw', '.log'), stderr=outfile.replace('.bw', '.err'))
+
+#############################################
+########## 3. Average bedgraph
+#############################################
+
+# @collate(tileMethylation,
+# 		 regex(r'(.*)/(.*)/split/(human_.*?)_.*.tsv.gz'),
+# 		 add_inputs(r'arion/datasets/reference_genomes/\2/*.chrom.sizes'),
+# 		 r'\1/\2/bw_tiled/\3-tiled_methylation.bw')
+
+# def averageTiledMethylation(infiles, outfile):
+
+# 	# Split
+# 	chromsize_file = infiles[0][1]
+# 	infiles = [x[0] for x in infiles]
+
+# 	# Run
+# 	run_r_job('average_tiled_methylation', infiles, outfile, modules=['R/4.0.3'], additional_params=chromsize_file, W='03:00', GB=50, n=1, stdout=outfile.replace('.bw', '.log'), stderr=outfile.replace('.bw', '.err'))
+
+# rm -r /hpc/users/torred23/pipelines/projects/early-embryo/arion/methylation/s04-methylation.dir/human/bw
+
+# #############################################
+# ########## 1. Smoothen
+# #############################################
+
+# # @collate('arion/methylation/s03-bismark.dir/human/results/*/methylation/*.bismark.cov.gz', # change to whole genome coverage report
+# @collate('arion/methylation/s03-bismark.dir/human/results/*/methylation_v2/*.CpG_report.txt.gz', # change to whole genome coverage report
+# 		 regex(r'(.*)/s03-bismark.dir/(.*)/results/(.*?_.*?)_.*.gz'),
+# 		 r'\1/s04-methylation.dir/\2/cpg/\3-smoothened_methylation.rda')
+
+# def smoothenMethylation(infiles, outfile):
+
+# 	# Run
+# 	run_r_job('smoothen_methylation', infiles, outfile, modules=['R/4.0.3'], W='03:00', GB=50, n=1, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+# #############################################
+# ########## 2. TSS profiles
+# #############################################
+
+# def tssScoreJobs():
+# 	for organism in ['human']:
+# 		bed_files = glob.glob('arion/atacseq/s07-tss_scores.dir/{organism}/bed/*.bed'.format(**locals()))
+# 		methylation_files = glob.glob('arion/methylation/s04-methylation.dir/{organism}/split/*-smoothened_methylation.rda'.format(**locals()))
+# 		for methylation_file in methylation_files:
+# 			cell_type = os.path.basename(methylation_file).split('-')[0]
+# 			for bed_file in bed_files:
+# 				bed_name = os.path.basename(bed_file)[:-len('.bed')]
+# 				infiles = [methylation_file, bed_file]
+# 				outfile = 'arion/methylation/s05-tss_profiles.dir/{organism}/average_scores/{organism}_{cell_type}-{bed_name}-scores.tsv'.format(**locals())
+# 				yield [infiles, outfile]
+
+# # @follows(getTssBed, shuffleTssBed, mergeScaledBigWig)
+
+# @files(tssScoreJobs)
+
+# def getTssScores(infiles, outfile):
+
+# 	# Command
+# 	cmd_str = ''' bigWigAverageOverBed {infiles[0]} {infiles[1]} {outfile} '''.format(**locals())
+	
+# 	# Run
+# 	print(infiles, outfile)
+# 	# run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:10', GB=30, n=1, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# #############################################
+# ########## 1. Smoothen
+# #############################################
+
+# @transform('arion/methylation/s03-bismark.dir/human/results/*8C*/methylation/*.bismark.cov.gz', # change to whole genome coverage report
+# 		   regex(r'(.*)/s03-bismark.dir/(.*)/results/.*/(.*)_pe.bismark.cov.gz'),
+# 		   r'\1/s04-methylation.dir/\2/split/\3-smoothened_methylation.rda')
+
+# def smoothenMethylation(infile, outfile):
+
+# 	# Run
+# 	run_r_job('smoothen_methylation', infile, outfile, modules=['R/4.0.3'], W='00:30', GB=5, n=5, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+# #############################################
+# ########## 2. Combine
+# #############################################
+
+# @collate(smoothenMethylation,
+# 		 regex(r'(.*)/(.*)/split/.*.rda'),
+# 		 r'\1/\2-smoothened_methylation_merged.rda')
+
+# def mergeSmoothenedMethylation(infiles, outfile):
+# 	print(infiles, outfile)
+
+# for coverage plots: read each TSS BED into separate GRanges, use getMeth to get methylation across samples,
+# average across replicates, merge and plot
+
+# #############################################
+# ########## 1. Average replicates
+# #############################################
+
+# @collate('arion/methylation/s03-bismark.dir/human/results/*/methylation/*.bedGraph.gz',
+# 		 regex(r'(.*)/s03-bismark.dir/(.*)/results/(human_.*?_.).*/.*.gz'),
+# 		 r'\1/s04-methylation.dir/\2/bedgraph_split/\3.bedgraph.gz')
+
+# def mergeReplicates(infiles, outfile):
+
+# 	# Check
+# 	if len(infiles) == 1:
+
+# 		# Create directory
+# 		outdir = os.path.dirname(outfile)
+# 		if not os.path.exists(outdir):
+# 			os.makedirs(outdir)
+
+# 		# Copy
+# 		os.system('cp {infiles[0]} {outfile}'.format(**locals()))
+
+# 	else:
+
+# 		# Run
+# 		run_r_job('get_average_methylation', infiles, outfile, conda_env='env', W='00:30', GB=10, n=1, stdout=outfile.replace('.bedgraph.gz', '.log'), stderr=outfile.replace('.bedgraph.gz', '.err'))#, run_locally=False, print_outfile=False, print_cmd=False)
+
+# # find arion/methylation/s04-methylation.dir/human/bedgraph_split -name "*.log" | jsc
+# # find arion/methylation/s04-methylation.dir/human/bedgraph_split -name "*.err" | xargs wc -l
+
+# #############################################
+# ########## 2. Average samples
+# #############################################
+
+# @collate(mergeReplicates,
+# 		 regex(r'(.*)/bedgraph_split/(.*)_..bedgraph.gz'),
+# 		 r'\1/bedgraph/\2.bedgraph.gz')
+
+# def mergeSamples(infiles, outfile):
+
+# 	# Run
+# 	run_r_job('get_average_methylation', infiles, outfile, conda_env='env', W='00:30', GB=10, n=1, stdout=outfile.replace('.bedgraph.gz', '.log'), stderr=outfile.replace('.bedgraph.gz', '.err'))#, run_locally=False, print_outfile=False, print_cmd=False)
+
+# # find arion/methylation/s04-methylation.dir/human/bedgraph -name "*.log" | jsc
+# # find arion/methylation/s04-methylation.dir/human/bedgraph -name "*.err" | xargs wc -l
+
+# #############################################
+# ########## 3. BigWig
+# #############################################
+
+# @transform(mergeSamples,
+# 		   regex(r'(.*)/bedgraph/(.*).bedgraph.gz'),
+# 		   r'\1/bw/\2.bw')
+
+# def convertBigWig(infile, outfile):
+
+# 	# Temp
+# 	tempfile = outfile.replace('.bw', '.sorted.tmp.bedgraph')
+
+# 	# Command
+# 	cmd_str = """ zcat {infile} | sort -k1,1 -k2,2n > {tempfile} && bedGraphToBigWig {tempfile} arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly_renamed.nochr.chromsizes {outfile} && rm {tempfile} """.format(**locals())
+
+# 	# Run
+# 	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:30', n=1, GB=10, print_cmd=False, stdout=outfile.replace('.bw', '.log'), stderr=outfile.replace('.bw', '.err'))
 
 # find arion/methylation/s04-methylation.dir/human/bw -name "*.log" | jsc
 # find arion/methylation/s04-methylation.dir/human/bw -name "*.err" | xargs wc -l
@@ -400,32 +530,34 @@ def convertBigWig(infile, outfile):
 #######################################################
 
 #############################################
-########## 1. TSS overlap
+########## 1. TSS
 #############################################
 
 def tssScoreJobs():
 	for organism in ['human']:
 		bed_files = glob.glob('arion/atacseq/s07-tss_scores.dir/{organism}/bed/*.bed'.format(**locals()))
-		bigwig_files = glob.glob('arion/methylation/s04-methylation.dir/{organism}/bw/*.bw'.format(**locals()))
-		for bigwig_file in bigwig_files:
-			bigwig_name = os.path.basename(bigwig_file)[:-len('.bw')]
+		cytosine_files = glob.glob('arion/methylation/s03-bismark.dir/{organism}/results/*/methylation/*.CpG_report.txt.gz'.format(**locals()))
+		for cytosine_file in cytosine_files:
+			sample_name = os.path.basename(cytosine_file).rsplit('_', 2)[0]
 			for bed_file in bed_files:
 				bed_name = os.path.basename(bed_file)[:-len('.bed')]
-				infiles = [bigwig_file, bed_file]
-				outfile = 'arion/methylation/s05-tss_scores.dir/{organism}/average_scores/{bigwig_name}-{bed_name}-scores.tsv'.format(**locals())
+				infiles = [cytosine_file, bed_file]
+				outfile = 'arion/methylation/s05-tss_scores.dir/{organism}/split/{sample_name}-{bed_name}-scores.tsv'.format(**locals())
 				yield [infiles, outfile]
 
 # @follows(getTssBed, shuffleTssBed, mergeScaledBigWig)
 
+# @transform('arion/methylation/s03-bismark.dir/{organism}/results/*/methylation/*.CpG_report.txt.gz',
+# 		   regex(r'(.*).suffix'),
+# 		   add_inputs(additionalInputs),
+# 		   r'\1.new_suffix')
+
 @files(tssScoreJobs)
 
-def getTssScores(infiles, outfile):
+def getTssMethylation(infiles, outfile):
 
-	# Command
-	cmd_str = ''' bigWigAverageOverBed {infiles[0]} {infiles[1]} {outfile} '''.format(**locals())
-	
 	# Run
-	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:10', GB=30, n=1, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+	run_r_job('get_tss_methylation', infiles, outfile, modules=['R/4.0.3'], W='00:30', GB=20, n=1, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
 #######################################################
 #######################################################
@@ -439,16 +571,17 @@ def getTssScores(infiles, outfile):
 
 # @follows(createBigWig, splitGTF)
 
-@collate('arion/methylation/s04-methylation.dir/human/bw/*.bw',
-		 regex(r'(.*)/s04-methylation.dir/(.*)/bw/.*.bw'),
+# @collate('arion/methylation/s04-methylation.dir/human/bw_tiled/*.bw',
+@collate('arion/methylation/s04-methylation.dir/human/tiled_100bp/bw/*.bw',
+		 regex(r'(.*)/s04-methylation.dir/(.*)/tiled_100bp/bw/(.*).bw'),
 		 add_inputs(r'arion/chipseq/summary_plots.dir/tss_heatmaps/\2/bed/*.bed'),
-		 r'\1/s05-tss_plots.dir/tss_heatmaps_10kb/\2/methylation-matrix.gz')
+		 r'\1/s05-tss_plots.dir/tss_heatmaps_split/\3/\3-methylation_matrix.gz')
 
 def computeTssMatrixAverage(infiles, outfile):
 
 	# Get order
 	order_dict = {
-		'bigwig': {'1C': 1, '2C': 2, '4C': 3, '8C': 4, 'morula': 5, 'ICM': 6, 'TE': 7, 'postimplantation': 8},
+		'bigwig': {'oocyte':0, '1C': 1, '2C': 2, '4C': 3, '8C': 4, 'morula': 5, 'ICM': 6, 'TE': 7, 'postimplantation': 8},
 		'bed': {'Known_TSS': 1, 'Novel_TSS': 2, 'Antisense_TSS': 3, 'Intergenic_TSS': 4, 'Shuffled_TSS': 5}
 	}
 
@@ -459,7 +592,7 @@ def computeTssMatrixAverage(infiles, outfile):
 	# Get bigwig order
 	bigwig_str = ' '.join(pd.DataFrame({
 		'bigwig': bigwigs,
-		'order': [order_dict['bigwig'][os.path.basename(x).split('_')[1][:-len('.bw')]] for x in bigwigs]
+		'order': [order_dict['bigwig'][os.path.basename(x).split('_')[1].split('.')[0]] for x in bigwigs]
 	}).sort_values('order')['bigwig'])
 
 	# Get GTF order
@@ -472,11 +605,11 @@ def computeTssMatrixAverage(infiles, outfile):
 	cmd_str = ''' computeMatrix reference-point -S {bigwig_str} \
 					-R {bed_str} \
 					--referencePoint center \
-					--beforeRegionStartLength 10000 \
-					--afterRegionStartLength 10000 \
+					--beforeRegionStartLength 5000 \
+					--afterRegionStartLength 5000 \
 					--numberOfProcessors 48 \
 					-o {outfile}
-	'''.format(**locals()) #--skipZeros 
+	'''.format(**locals()) #--skipZeros \
 
 	# Run
 	run_job(cmd_str, outfile, conda_env='env', W='06:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
@@ -488,11 +621,15 @@ def computeTssMatrixAverage(infiles, outfile):
 		with open(jsonfile, 'w') as openfile:
 			openfile.write(json.dumps(bigwig_names))
 
+# find arion/methylation/s05-tss_plots.dir/tss_heatmaps_split -name "*.gz"
+
 #############################################
 ########## 2. TSS Plot
 #############################################
 
-@transform(computeTssMatrixAverage,
+# @transform(computeTssMatrixAverage,
+@transform('arion/methylation/s05-tss_plots.dir/tss_heatmaps_split/*/*-methylation_matrix.gz',
+# @transform('arion/methylation/s05-tss_plots.dir/tss_heatmaps_10kb/human/methylation-matrix.gz',
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
 		   r'\1_profile.png')
@@ -526,16 +663,16 @@ def plotTssProfile(infiles, outfile):
 
 # @follows(createBigWig, splitGTF)
 
-@collate('arion/methylation/s04-methylation.dir/human/bw/*.bw',
-		 regex(r'(.*)/s04-methylation.dir/(.*)/bw/.*.bw'),
-		 add_inputs(r'arion/atacseq/summary_plots.dir/isoform_heatmaps_5000_v2/\2/gtf/*.gtf'),
-		 r'\1/s05-tss_plots.dir/isoform_heatmaps_5000_v2/\2/methylation-matrix.gz')
+@collate('arion/methylation/s04-methylation.dir/human/bw_tiled/*.bw',
+		 regex(r'(.*)/s04-methylation.dir/(.*)/bw_tiled/.*.bw'),
+		 add_inputs(r'arion/atacseq/summary_plots.dir/isoform_heatmaps/\2/gtf/*.gtf'),
+		 r'\1/s05-tss_plots.dir/isoform_heatmaps/\2/methylation-matrix.gz')
 
 def computeIsoformMatrixAverage(infiles, outfile):
 
 	# Get order
 	order_dict = {
-		'bigwig': {'1C': 1, '2C': 2, '4C': 3, '8C': 4, 'morula': 5, 'ICM': 6, 'TE': 7, 'postimplantation': 8},
+		'bigwig': {'oocyte': 0, '1C': 1, '2C': 2, '4C': 3, '8C': 4, 'morula': 5, 'ICM': 6, 'TE': 7, 'postimplantation': 8},
 		'gtf': {'Known': 1, 'NIC': 2, 'NNC': 3, 'Antisense': 4, 'Intergenic': 5}
 	}
 
@@ -546,7 +683,7 @@ def computeIsoformMatrixAverage(infiles, outfile):
 	# Get bigwig order
 	bigwig_str = ' '.join(pd.DataFrame({
 		'bigwig': bigwigs,
-		'order': [order_dict['bigwig'][os.path.basename(x).split('_')[1][:-len('.bw')]] for x in bigwigs]
+		'order': [order_dict['bigwig'][os.path.basename(x).replace('-', '_').split('_')[1]] for x in bigwigs]
 	}).sort_values('order')['bigwig'])
 
 	# Get GTF order
@@ -562,8 +699,8 @@ def computeIsoformMatrixAverage(infiles, outfile):
 					--regionBodyLength 10000 \
 					--afterRegionStartLength 5000 \
 					--numberOfProcessors 48 \
-					--skipZeros -o {outfile}
-	'''.format(**locals())
+					-o {outfile}
+	'''.format(**locals()) #--skipZeros 
 
 	# Run
 	run_job(cmd_str, outfile, conda_env='env', W='06:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
