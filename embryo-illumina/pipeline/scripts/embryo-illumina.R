@@ -142,7 +142,7 @@ aggregate_counts <- function(infiles, outfile) {
     suppressPackageStartupMessages(require(DESeq2))
 
     # Get organism
-    organism <- gsub('.*/(.*?)_.*.rda', '\\1', outfile)
+    organism <- gsub('.*/(.*?)-counts.rda', '\\1', outfile)
 
     # Get sample dataframe
     sample_dataframe <- fread(infiles[1])
@@ -151,27 +151,27 @@ aggregate_counts <- function(infiles, outfile) {
     gtf <- rtracklayer::readGFF(infiles[2]) %>% select(-source) %>% filter(type=='transcript')
 
     # Get transcript information
-    transcript_dataframe <- gtf %>% select(gene_id, gene_name, gene_status, transcript_id, transcript_name, transcript_status, transcript_biotype, NNC_transcript, NIC_transcript, intergenic_transcript, antisense_transcript) %>% distinct
-    rownames(transcript_dataframe) <- transcript_dataframe$transcript_id
+    tx2gene <- gtf %>% select(transcript_id, gene_id) %>% distinct
+    # rownames(transcript_dataframe) <- transcript_dataframe$transcript_id
 
     # Get gene information
-    gene_dataframe <- transcript_dataframe %>% group_by(gene_id, gene_name, gene_status) %>% summarize(
-        nr_transcripts=length(unique(transcript_id)),
-        novel_transcripts=sum(transcript_status=='NOVEL'),
-        NNC_transcripts=sum(NNC_transcript=='TRUE', na.rm=TRUE),
-        NIC_transcripts=sum(NIC_transcript=='TRUE', na.rm=TRUE),
-        intergenic_transcripts=sum(intergenic_transcript=='TRUE', na.rm=TRUE),
-        antisense_transcripts=sum(antisense_transcript=='TRUE', na.rm=TRUE)
-    ) %>% as.data.frame
-    rownames(gene_dataframe) <- gene_dataframe$gene_id
+    # gene_dataframe <- transcript_dataframe %>% group_by(gene_id, gene_name, gene_status) %>% summarize(
+    #     nr_transcripts=length(unique(transcript_id)),
+    #     novel_transcripts=sum(transcript_status=='NOVEL'),
+    #     NNC_transcripts=sum(NNC_transcript=='TRUE', na.rm=TRUE),
+    #     NIC_transcripts=sum(NIC_transcript=='TRUE', na.rm=TRUE),
+    #     intergenic_transcripts=sum(intergenic_transcript=='TRUE', na.rm=TRUE),
+    #     antisense_transcripts=sum(antisense_transcript=='TRUE', na.rm=TRUE)
+    # ) %>% as.data.frame
+    # rownames(gene_dataframe) <- gene_dataframe$gene_id
 
     # Read isoform counts
     se <- tximeta(sample_dataframe, type='rsem', txIn=TRUE, txOut=TRUE)
-    rowData(se) <- transcript_dataframe[rownames(rowData(se)),]
+    # rowData(se) <- transcript_dataframe[rownames(rowData(se)),]
 
     # Read gene counts
-    gse <- tximeta(sample_dataframe, type='rsem', txIn=TRUE, txOut=FALSE, tx2gene=transcript_dataframe %>% select(transcript_id, gene_id))
-    rowData(gse) <- gene_dataframe[rownames(rowData(gse)),]
+    gse <- tximeta(sample_dataframe, type='rsem', txIn=TRUE, txOut=FALSE, tx2gene=tx2gene)
+    # rowData(gse) <- gene_dataframe[rownames(rowData(gse)),]
 
     # Create DESeq dataset
     if (organism == 'human') {
@@ -283,7 +283,7 @@ run_deseq2 <- function(infiles, outfileRoot, feature) {
     load(infiles[1])
 
     # Read comparisons
-    organism <- gsub('.*.dir/(.*?)/(.*?)/.*', '\\1', outfileRoot)
+    organism <- gsub('.*.dir/(.*?)/.*', '\\1', outfileRoot)
     comparisons <- fromJSON(file = infiles[2])[[organism]]
 
     # Get DDS
@@ -303,23 +303,23 @@ run_deseq2 <- function(infiles, outfileRoot, feature) {
         # Get results
         deseq_dataframe <- results(dds, contrast = c('cell_type', comparison[2], comparison[1]), alpha=0.05) %>% as.data.frame %>% rownames_to_column(ifelse(feature == 'transcript', 'transcript_id', 'gene_id')) %>% filter(baseMean > 0)
         
-        # Add annotation
-        if (feature == 'gene') {
-            gene_dataframe <- as.data.frame(rowData(dds))[,1:5]
-            result_dataframe <- gene_dataframe %>% right_join(deseq_dataframe, by='gene_id')
-        } else if (feature == 'transcript') {
-            transcript_dataframe <- as.data.frame(rowData(dds)) %>% select(transcript_id, transcript_name, transcript_status, transcript_biotype, gene_id, gene_name, gene_status, NNC_transcript, NIC_transcript, intergenic_transcript, antisense_transcript)
-            result_dataframe <- deseq_dataframe %>% left_join(transcript_dataframe, by='transcript_id')
-        }
+        # # Add annotation
+        # if (feature == 'gene') {
+        #     gene_dataframe <- as.data.frame(rowData(dds))[,1:5]
+        #     result_dataframe <- gene_dataframe %>% right_join(deseq_dataframe, by='gene_id')
+        # } else if (feature == 'transcript') {
+        #     transcript_dataframe <- as.data.frame(rowData(dds)) %>% select(transcript_id, transcript_name, transcript_status, transcript_biotype, gene_id, gene_name, gene_status, NNC_transcript, NIC_transcript, intergenic_transcript, antisense_transcript)
+        #     result_dataframe <- deseq_dataframe %>% left_join(transcript_dataframe, by='transcript_id')
+        # }
 
-        # Sort
-        result_dataframe <- result_dataframe %>% arrange(pvalue)
+        # # Sort
+        # result_dataframe <- result_dataframe %>% arrange(pvalue)
 
         # Get outfile
         outfile <- glue(outfileRoot)
 
         # Write
-        fwrite(result_dataframe, file=outfile, sep='\t')
+        fwrite(deseq_dataframe, file=outfile, sep='\t')
 
     }
 
@@ -715,6 +715,120 @@ get_module_preservation <- function(infiles, outfile) {
 }
 
 #############################################
+########## 6. Filter adjacency
+#############################################
+
+filter_adjacency <- function(infile, outfile, min_adjacency) {
+    
+    # Library
+    suppressPackageStartupMessages(require(WGCNA))
+    suppressPackageStartupMessages(require(igraph))
+
+    # Load network
+    load(infile)
+
+    # Filter
+    adj <- TOMsimilarity(adjacency, TOMType = "signed")
+    rownames(adj) <- rownames(adjacency)
+    colnames(adj) <- colnames(adjacency)
+
+    # adj <- adjacency[1:500, 1:500]
+
+    # Filter and binarize
+    adj[adj > as.numeric(min_adjacency)] = 1
+    adj[adj != 1] = 0
+
+    # Create network and simplify
+    network <- graph.adjacency(adj)
+    network <- simplify(network)  # removes self-loops
+    network <- delete.vertices(network, degree(network)==0) # remove unconnected nodes
+
+    # Layout randomly
+    network_layout <- layout_randomly(network)
+
+    # Save
+    save(network, network_layout, file=outfile)
+
+}
+
+#############################################
+########## 7. Plot network
+#############################################
+
+plot_network <- function(infiles, outfile, network_parameters) {
+
+    # Library
+    require(igraph)
+    require(ggnetwork)
+    
+    # Load
+    load(infiles[2])
+    load(infiles[3])
+    load(infiles[1])
+
+    # Check network type
+    if (network_parameters[2] == 'full') {
+
+        # Set random seed
+        set.seed(as.numeric(network_parameters[1]))
+
+        # Get new layout
+        network_layout <- layout_with_fr(network, coords = network_layout, niter=1000)
+
+        # Write
+        save(network_layout, file=outfile)
+
+        # Create network
+        layout_dataframe <- ggnetwork(network, layout=network_layout) %>% rename('gene_id'='name') %>% left_join(module_dataframe, by='gene_id')
+
+        # Plot
+        png(gsub('.rda', '.png', outfile), height=700, width=700)
+        gp <- ggplot(layout_dataframe, aes(x = x, y = y, xend = xend, yend = yend)) +
+            geom_edges(color = "grey60", size=.05, alpha=0.1) +
+            geom_nodes(aes(color=module_color), size=.5) +
+            scale_color_manual(values=layout_dataframe %>% pull(module_color, module_color)) +
+            guides(color=FALSE) +
+            theme_blank()
+        print(gp)
+        dev.off()
+
+    } else if (network_parameters[2] == 'subnetwork') {
+
+        # Split network
+        split_network <- decompose.graph(network)
+
+        # Layout subnetworks
+        layout_dataframe <- lapply(1:length(split_network), function(i) {
+            set.seed(as.numeric(network_parameters[1]))
+            ggnetwork(intergraph::asNetwork(split_network[[i]]), layout=network_parameters[3]) %>% rename('gene_id'='vertex.names') %>% left_join(module_dataframe, by='gene_id') %>% mutate(subnetwork_nr=glue('subnetwork_{i}'))
+        }) %>% bind_rows
+
+        # Write
+        fwrite(layout_dataframe, file=outfile, sep='\t')
+        
+        # Get network sizes
+        subnetwork_sizes <- setNames(lapply(split_network, function(x) length(V(x))), paste0('subnetwork_', 1:length(split_network)))
+
+        # Add column
+        layout_dataframe <- layout_dataframe %>% mutate(subnetwork_name=glue('{subnetwork_nr} (n={subnetwork_sizes[subnetwork_nr]})'))
+        
+        # Plot
+        png(gsub('.rda', '.png', outfile), height=700, width=700)
+        gp <- ggplot(layout_dataframe, aes(x = x, y = y, xend = xend, yend = yend)) +
+            geom_edges(color = "grey60", size=.05, alpha=0.1) +
+            geom_nodes(aes(color=module_color), size=.5) +
+            scale_color_manual(values=layout_dataframe %>% pull(module_color, module_color)) +
+            guides(color=FALSE) +
+            facet_wrap(~subnetwork_name, scales='free') +
+            theme_blank()
+        print(gp)
+        dev.off()
+
+    }
+
+}
+
+#############################################
 ########## 6. Get gene connectivity
 #############################################
 
@@ -744,63 +858,165 @@ get_module_membership <- function(infiles, outfile) {
 ########## 7. Get gene networks
 #############################################
 
-get_gene_networks <- function(infiles, outfile) {
+get_gene_network <- function(infiles, outfile) {
     
     # Load
     load(infiles[1])
     load(infiles[2])
     load(infiles[3])
-
-    # Get gene symbol
-    name_dataframe <- rtracklayer::readGFF(infiles[4]) %>% select(gene_id, gene_name) %>% distinct
-
-    # Read genes
-    developmental_dataframe <- fread(infiles[5], header=TRUE)
-
-    # Sort
-    colnames(membership_dataframe) <- gsub('kME', 'mo', colnames(membership_dataframe))
-    gene_dataframe <- membership_dataframe %>% rownames_to_column('gene_id') %>% pivot_longer(-gene_id, names_to = 'module_name', values_to = 'module_membership') %>% inner_join(module_dataframe, by=c('gene_id', 'module_name'))
-    id2symbol <- name_dataframe %>% pull(gene_name, gene_id)
-
-    # # Top N genes by connectivity
-    selected_modules <- paste0('module_', c(2,6,3,8,13,32,40))
-    # nr_genes <- as.numeric(gsub('.*top(.*?)/.*', '\\1', outfile))
-    # top_dataframe <- gene_dataframe %>% group_by(module_name) %>% slice_max(order_by = module_membership, n=nr_genes) %>% filter(module_name %in% selected_modules)
     
-    # Select top 3 novel genes per cluster
-    novel_dataframe <- gene_dataframe %>% filter(grepl('TALON', gene_id)) %>% group_by(module_name) %>% slice_max(order_by = module_membership, n = 3) %>% filter(module_name %in% selected_modules)
+    # Get gene symbol
+    symbol_dataframe <- rtracklayer::readGFF(infiles[4]) %>% select(gene_id, gene_name) %>% distinct
 
-    # Select 10 known genes per cluster, prioritizing developmental ones
-    known_dataframe <- gene_dataframe %>% filter(grepl('ENS', gene_id)) %>% mutate(gene_symbol=id2symbol[gene_id], developmental=ifelse(gene_symbol %in% developmental_dataframe$Gene_Symbol, 100, 1)) %>% group_by(module_name) %>% 
-        slice_max(order_by = developmental*module_membership, n = 15) %>% filter(module_name %in% selected_modules) %>% arrange(module_name)
+    # Get average
+    expression_matrix <- t(log1p_dataframe)
+    average_dataframe <- apply(expression_matrix, 1, mean) %>% as.data.frame %>% rename('average_expression'='.') %>% rownames_to_column('gene_id')
+
+    # Select modules
+    selected_modules <- paste0('module_', c(2,6,3,8,13,32,40))
 
     # Merge
-    top_dataframe <- rbind(novel_dataframe, known_dataframe) %>% select(-gene_symbol, -developmental)
+    colnames(membership_dataframe) <- gsub('kME', 'mo', colnames(membership_dataframe))
+    merged_dataframe <- membership_dataframe %>% rownames_to_column('gene_id') %>% pivot_longer(-gene_id, names_to = 'module_name', values_to = 'kME') %>% inner_join(module_dataframe, by=c('gene_id', 'module_name')) %>%
+        left_join(connectivity_dataframe %>% rownames_to_column('gene_id'), by='gene_id') %>% left_join(symbol_dataframe, by='gene_id') %>% left_join(average_dataframe, by='gene_id') %>% 
+        filter(module_name %in% selected_modules)
 
-    # Split
-    gene_ids <- setNames(top_dataframe %>% group_split, top_dataframe %>% group_keys %>% pull(module_name)) %>% lapply(function(x) x %>% pull(gene_id))
+    # Get genes
+    gene_dataframe <- merged_dataframe %>% group_by(module_name) %>% slice_max(order_by = kME, n = 10)
 
-    # Get correlations
-    correlations <- lapply(gene_ids, function(x) {
-        correlation_matrix <- cor(log1p_dataframe[,x], method='spearman')
-        colnames(correlation_matrix) <- id2symbol[x]
-        rownames(correlation_matrix) <- id2symbol[x]
-        correlation_matrix[!upper.tri(correlation_matrix)] <- NA
-        edge_dataframe <- correlation_matrix %>% as.data.frame %>% rownames_to_column('source_gene_id') %>% pivot_longer(-source_gene_id, names_to = 'target_gene_id', values_to = 'correlation') %>% drop_na
-        colnames(edge_dataframe) <- gsub('_gene_id', '', colnames(edge_dataframe))
-        edge_dataframe
-    })
-                                                                                                                    
-    # Write edges
-    for (module_name in names(correlations)) {
-        module_outfile <- gsub('network-nodes', paste0(module_name, '-network'), outfile)
-        fwrite(correlations[[module_name]], file=module_outfile, sep='\t')
-    }
+    # Get network
+    network_gene_ids <- gene_dataframe$gene_id
+    subset_matrix <- expression_matrix[network_gene_ids,] %>% as.data.frame %>% rownames_to_column('gene_id') %>% left_join(symbol_dataframe, by='gene_id') %>% column_to_rownames('gene_name') %>% select(-gene_id)
+    correlation_network <- cor(t(subset_matrix), method='spearman')
+    correlation_network[!lower.tri(correlation_network)] <- NA
 
-    # Write nodes
-    fwrite(name_dataframe %>% filter(gene_id %in% do.call('c', gene_ids)) %>% rename('shared_name'='gene_id', 'name'='gene_name'), file=outfile, sep='\t')
+    # Get edges
+    network_dataframe <- correlation_network %>% as.data.frame %>% rownames_to_column('source') %>% pivot_longer(-source, names_to = 'target') %>% drop_na
+
+    # Add legend
+    # legend_values <- 10^seq(0, 6)
+    legend_values <- seq(1, 6)
+    legend_nodes <- paste0('gene_', format(legend_values, scientific=FALSE, trim=TRUE))
+    network_dataframe <- rbind(network_dataframe, data.frame(source=legend_nodes, target=legend_nodes, value=1)) %>% filter(value>0.5)
+    node_dataframe <- plyr::rbind.fill(gene_dataframe, data.frame(gene_name=legend_nodes, average_expression=legend_values)) %>% mutate(average_expression_counts=10^average_expression-1)
+
+    # Write
+    fwrite(network_dataframe, outfile, sep='\t')
+    fwrite(node_dataframe, gsub('-network', '-nodes', outfile), sep='\t')
 
 }
+
+
+#############################################
+########## 8. Get module peaks
+#############################################
+
+get_module_peaks <- function(infiles, outfileRoot) {
+
+    # Load
+    load(infiles[1])
+
+    # Read GTF
+    txdb <- GenomicFeatures::makeTxDbFromGFF(infiles[2])
+
+    # Read peaks
+    peak_ranges <- rtracklayer::import(infiles[3])
+
+    # Annotate peaks
+    annotated_ranges <- ChIPseeker::annotatePeak(peak_ranges, TxDb=txdb) #, addFlankGeneInfo=TRUE
+
+    # Get promoter peaks
+    # annotated_dataframe <- as.data.frame(annotated_ranges) %>% filter(grepl('Promoter', annotation)) %>% rename('gene_id'='geneId') %>% select(seqnames, start, end, name, score, strand, gene_id) %>% left_join(module_dataframe, by='gene_id')
+    annotated_dataframe <- as.data.frame(annotated_ranges) %>% filter(distanceToTSS==0) %>% rename('gene_id'='geneId') %>% select(seqnames, start, end, name, score, strand, gene_id) %>% left_join(module_dataframe, by='gene_id')
+
+    # Split
+    annotated_dataframes <- split(annotated_dataframe, annotated_dataframe$module_name)
+
+    # Write
+    for (module_name in names(annotated_dataframes)) {
+        
+        # Get dataframe
+        peak_dataframe <- annotated_dataframes[[module_name]] %>% select(-gene_id, -module_name, -module_color)
+        
+        # Write
+        if (nrow(peak_dataframe) > 50) {
+            
+            # Get outfile
+            outfile <- glue(outfileRoot)
+            
+            # Write
+            fwrite(peak_dataframe, file=outfile, sep='\t', col.names=FALSE)
+            
+        }
+    }
+
+    # Save background
+    background_dataframe <- annotated_dataframe %>% select(-gene_id, -module_name, -module_color)
+
+    # Write
+    module_name <- 'background'
+    fwrite(background_dataframe, file=glue(outfileRoot), sep='\t', col.names=FALSE)
+
+}
+
+
+# get_gene_networks <- function(infiles, outfile) {
+    
+#     # Load
+#     load(infiles[1])
+#     load(infiles[2])
+#     load(infiles[3])
+
+#     # Get gene symbol
+#     name_dataframe <- rtracklayer::readGFF(infiles[4]) %>% select(gene_id, gene_name) %>% distinct
+
+#     # Read genes
+#     developmental_dataframe <- fread(infiles[5], header=TRUE)
+
+#     # Sort
+#     colnames(membership_dataframe) <- gsub('kME', 'mo', colnames(membership_dataframe))
+#     gene_dataframe <- membership_dataframe %>% rownames_to_column('gene_id') %>% pivot_longer(-gene_id, names_to = 'module_name', values_to = 'module_membership') %>% inner_join(module_dataframe, by=c('gene_id', 'module_name'))
+#     id2symbol <- name_dataframe %>% pull(gene_name, gene_id)
+
+#     # # Top N genes by connectivity
+#     selected_modules <- paste0('module_', c(2,6,3,8,13,32,40))
+#     # nr_genes <- as.numeric(gsub('.*top(.*?)/.*', '\\1', outfile))
+#     # top_dataframe <- gene_dataframe %>% group_by(module_name) %>% slice_max(order_by = module_membership, n=nr_genes) %>% filter(module_name %in% selected_modules)
+    
+#     # Select top 3 novel genes per cluster
+#     novel_dataframe <- gene_dataframe %>% filter(grepl('TALON', gene_id)) %>% group_by(module_name) %>% slice_max(order_by = module_membership, n = 3) %>% filter(module_name %in% selected_modules)
+
+#     # Select 10 known genes per cluster, prioritizing developmental ones
+#     known_dataframe <- gene_dataframe %>% filter(grepl('ENS', gene_id)) %>% mutate(gene_symbol=id2symbol[gene_id], developmental=ifelse(gene_symbol %in% developmental_dataframe$Gene_Symbol, 100, 1)) %>% group_by(module_name) %>% 
+#         slice_max(order_by = developmental*module_membership, n = 15) %>% filter(module_name %in% selected_modules) %>% arrange(module_name)
+
+#     # Merge
+#     top_dataframe <- rbind(novel_dataframe, known_dataframe) %>% select(-gene_symbol, -developmental)
+
+#     # Split
+#     gene_ids <- setNames(top_dataframe %>% group_split, top_dataframe %>% group_keys %>% pull(module_name)) %>% lapply(function(x) x %>% pull(gene_id))
+
+#     # Get correlations
+#     correlations <- lapply(gene_ids, function(x) {
+#         correlation_matrix <- cor(log1p_dataframe[,x], method='spearman')
+#         colnames(correlation_matrix) <- id2symbol[x]
+#         rownames(correlation_matrix) <- id2symbol[x]
+#         correlation_matrix[!upper.tri(correlation_matrix)] <- NA
+#         edge_dataframe <- correlation_matrix %>% as.data.frame %>% rownames_to_column('source_gene_id') %>% pivot_longer(-source_gene_id, names_to = 'target_gene_id', values_to = 'correlation') %>% drop_na
+#         colnames(edge_dataframe) <- gsub('_gene_id', '', colnames(edge_dataframe))
+#         edge_dataframe
+#     })
+                                                                                                                    
+#     # Write edges
+#     for (module_name in names(correlations)) {
+#         module_outfile <- gsub('network-nodes', paste0(module_name, '-network'), outfile)
+#         fwrite(correlations[[module_name]], file=module_outfile, sep='\t')
+#     }
+
+#     # Write nodes
+#     fwrite(name_dataframe %>% filter(gene_id %in% do.call('c', gene_ids)) %>% rename('shared_name'='gene_id', 'name'='gene_name'), file=outfile, sep='\t')
+
+# }
 
 # #############################################
 # ########## 5. Get module correlations
