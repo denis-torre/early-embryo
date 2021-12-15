@@ -163,8 +163,8 @@ copy_lifted_gtf <- function(infile, outfile) {
     gtf$source <- 'liftOver'
 
     # Add chromosome
-    if (grepl('marmoset', outfile)) {
-        gtf <- diffloop::addchr(gtf)
+    if (grepl('macaque', outfile)) {
+        gtf <- diffloop::rmchr(gtf)
     }
 
     # Wrote

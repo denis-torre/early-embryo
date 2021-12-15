@@ -31,7 +31,7 @@ import lsf
 r_source = 'pipeline/scripts/geo-illumina.R'
 py_source = 'pipeline/scripts/GeoIllumina.py'
 P = 'acc_apollo'
-q = 'sla'
+q = 'premium'
 W = '00:30'
 GB = 5
 n = 1
@@ -77,22 +77,22 @@ primate_linked_fastq = {
 	'macaque': [x for x in linked_fastq if 'wang' in x],
 	'marmoset': [x for x in linked_fastq if 'boroviak' in x]
 }
-human_filtered_gtf = 'arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf'
-human_star_index = 'arion/illumina/s04-alignment.dir/human/all/STAR/index'
-human_rsem_index = 'arion/illumina/s04-alignment.dir/human/all/RSEM/index/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.idx.fa'
-human_junction_file = 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_junctions.tsv'
+human_filtered_gtf = 'arion/isoseq/s05-talon.dir/human/gtf/Homo_sapiens.GRCh38.102_talon-SJ_filtered.gtf'
+human_star_index = 'arion/illumina/s03-alignment.dir/human/isoseq/STAR/index'
+human_rsem_index = 'arion/illumina/s03-alignment.dir/human/isoseq/RSEM/index/Homo_sapiens.GRCh38.102_talon-SJ_filtered.idx.fa'#arion/illumina/s04-alignment.dir/human/all/RSEM/index/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.idx.fa
+human_junction_file = 'to_fix' #arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_junctions.tsv
 nonhuman_genomes = {
 	'macaque': {
 		'gtf': 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.102.gtf',
 		'gtf_lifted': 'arion/geo_illumina/s05-primates.dir/macaque/gtf/macaque-hg38_filtered_lifted.gtf',
-		'genome_fasta': 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.dna_sm.primary_assembly.fa',
-		'sashimi_bams': 'arion/geo_illumina/summary.dir/sashimi/settings/macaque-bams.txt'
+		'genome_fasta': 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.dna_sm.primary_assembly.fa'#,
+		# 'sashimi_bams': 'arion/geo_illumina/summary.dir/sashimi/settings/macaque-bams.txt'
 	},
 	'marmoset': {
 		'gtf': 'arion/datasets/reference_genomes/marmoset/ncbiRefSeq.gtf',
 		'gtf_lifted': 'arion/geo_illumina/s05-primates.dir/marmoset/gtf/marmoset-hg38_filtered_lifted.gtf',
-		'genome_fasta': 'arion/datasets/reference_genomes/marmoset/calJac4.fa',
-		'sashimi_bams': 'arion/geo_illumina/summary.dir/sashimi/settings/marmoset-bams_subset.txt'
+		'genome_fasta': 'arion/datasets/reference_genomes/marmoset/calJac4.fa'#,
+		# 'sashimi_bams': 'arion/geo_illumina/summary.dir/sashimi/settings/marmoset-bams_subset.txt'
 	}
 }
 # macaque_gtf = 'arion/datasets/reference_genomes/macaque/Macaca_mulatta.Mmul_10.102.gtf'
@@ -350,9 +350,9 @@ def runFastQC(infile, outfile):
 
 # @follows(runFastQC)
 
-@transform('arion/geo_illumina/s02-fastqc.dir/*',
-		   regex(r'(.*)/s02-fastqc.dir/(.*)'),
-		   r'\1/multiqc/\2/multiqc_report.html')
+@transform(('arion/geo_illumina/s02-fastqc.dir/*', 'arion/geo_illumina/s03-alignment.dir/*', 'arion/geo_illumina/s05-primates.dir/*'),
+		   regex(r'(.*)/s..-(.*).dir/(.*)'),
+		   r'\1/multiqc/\3/\3_\2/multiqc_report.html')
 
 def runMultiQC(infile, outfile):
 
@@ -402,7 +402,7 @@ def getStarJunctions(infiles, outfile):
 		--outSAMtype None'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="06:00", print_outfile=True, GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
+	run_job(cmd_str, outfile, W="06:00", print_outfile=False, GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
 
 # ls arion/geo_illumina/s03-alignment.dir/*/STAR/pass1/*/*_job.log | jsc
 
@@ -442,7 +442,7 @@ def runStar(infiles, outfile):
 		--outSAMtype BAM SortedByCoordinate && samtools index {outfile} -@ 32 '''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=True, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
+	run_job(cmd_str, outfile, W="02:00", GB=15, n=10, modules=['star/2.7.5b', 'samtools/1.11'], print_outfile=False, stdout=outfile.replace('.bam', '.log'), stderr=outfile.replace('.bam', '.err'))
 
 # ls arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*.log | jsc
 # ls arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*Log.out | lr
@@ -452,21 +452,21 @@ def runStar(infiles, outfile):
 ########## 3. Junction counts
 #############################################
 
-@follows(runStar)
+# @follows(runStar)
 
-@collate('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-SJ.out.tab',
-		 regex(r'(.*)/(.*)/(.*)/pass2/.*/.*.tab'),
-		 add_inputs(human_junction_file),
-		 r'\1/\2/\3/\2-junction_counts.tsv')
+# @collate('arion/geo_illumina/s03-alignment.dir/*/STAR/pass2/*/*-SJ.out.tab',
+# 		 regex(r'(.*)/(.*)/(.*)/pass2/.*/.*.tab'),
+# 		 add_inputs(human_junction_file),
+# 		 r'\1/\2/\3/\2-junction_counts.tsv')
 
-def getJunctionCounts(infiles, outfile):
+# def getJunctionCounts(infiles, outfile):
 
-	# Infiles
-	sj_files = [x[0] for x in infiles]
-	junction_file = infiles[0][1]
+# 	# Infiles
+# 	sj_files = [x[0] for x in infiles]
+# 	junction_file = infiles[0][1]
 
-	# Run
-	run_r_job('get_junction_counts', sj_files, outfile, additional_params=junction_file, print_outfile=False, conda_env='env', W='02:00', GB=50, n=3, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+# 	# Run
+# 	run_r_job('get_junction_counts', sj_files, outfile, additional_params=junction_file, print_outfile=False, conda_env='env', W='02:00', GB=50, n=3, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
 # find arion/geo_illumina/s03-alignment.dir -name "*junction_counts*" | xargs rm
 
@@ -796,8 +796,8 @@ def novelPrimateGeneSashimi(infiles, outfile, gene_id):
 
 def gtfJobs():
 	gtf_dict = {
-		'macaque': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered-gene_id.gtf',
-		'marmoset': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToCalJac4/Homo_sapiens.GRCh38.102_talon.cds-hg38ToCalJac_filtered-gene_id.gtf'
+		'macaque': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon-SJ_filtered.cds-hg38ToRheMac10-gene_id.gtf',
+		'marmoset': 'arion/isoseq/s10-liftover.dir/human/merged/hg38ToCalJac4/Homo_sapiens.GRCh38.102_talon-SJ_filtered.cds-hg38ToCalJac4-gene_id.gtf'
 	}
 	for organism, infile in gtf_dict.items():
 		outfile = 'arion/geo_illumina/s05-primates.dir/{organism}/gtf/{organism}-hg38_filtered_lifted.gtf'.format(**locals())
@@ -891,7 +891,7 @@ def getPrimateStarJunctions(infiles, outfile):
 		--outSAMtype None'''.format(**locals())
 
 	# Run
-	run_job(cmd_str, outfile, W="02:00", print_outfile=False, GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
+	run_job(cmd_str, outfile, W="02:00", print_outfile=True, GB=5, n=15, modules=['star/2.7.5b'], stdout=outfile.replace('-SJ.out.tab', '_job.log'))
 
 # find arion/geo_illumina/s05-primates.dir/*/STAR/pass1/ -name "*job.log" | jsc
 
