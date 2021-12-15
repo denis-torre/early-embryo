@@ -530,12 +530,29 @@ def averageTiledMethylation(infiles, outfile):
 #######################################################
 
 #############################################
-########## 1. TSS
+########## 1. Get TSS content
+#############################################
+
+@transform('arion/atacseq/s07-tss_scores.dir/*/bed*/*bp.bed',
+		   regex(r'.*.dir/(.*)/.*/(.*).bed'),
+		   add_inputs(r'arion/datasets/reference_genomes/\1/*.dna_sm.primary_assembly.fa'),
+		   r'arion/methylation/s05-tss_scores.dir/\1/nucleotide_content/\2-nucleotide_content.tsv')
+
+def getTssContent(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bedtools nuc -fi {infiles[1]} -bed {infiles[0]} > {outfile} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, conda_env=False, modules=['bedtools/2.29.0'], W='00:15', GB=10, n=1, print_outfile=False, print_cmd=False)
+
+#############################################
+########## 3. Get average scores
 #############################################
 
 def tssScoreJobs():
 	for organism in ['human']:
-		bed_files = glob.glob('arion/atacseq/s07-tss_scores.dir/{organism}/bed/*.bed'.format(**locals()))
+		bed_files = glob.glob('arion/atacseq/s07-tss_scores.dir/{organism}/bed*/*bp.bed'.format(**locals()))
 		cytosine_files = glob.glob('arion/methylation/s03-bismark.dir/{organism}/results/*/methylation/*.CpG_report.txt.gz'.format(**locals()))
 		for cytosine_file in cytosine_files:
 			sample_name = os.path.basename(cytosine_file).rsplit('_', 2)[0]
@@ -574,8 +591,8 @@ def getTssMethylation(infiles, outfile):
 # @collate('arion/methylation/s04-methylation.dir/human/bw_tiled/*.bw',
 @collate('arion/methylation/s04-methylation.dir/human/tiled_100bp/bw/*.bw',
 		 regex(r'(.*)/s04-methylation.dir/(.*)/tiled_100bp/bw/(.*).bw'),
-		 add_inputs(r'arion/chipseq/summary_plots.dir/tss_heatmaps/\2/bed/*.bed'),
-		 r'\1/s05-tss_plots.dir/tss_heatmaps_split/\3/\3-methylation_matrix.gz')
+		 add_inputs(r'arion/atacseq/s07-tss_scores.dir/\2/bed*/*_TSS.bed'),
+		 r'\1/s06-tss_plots.dir/tss_heatmaps_split/\3/\3-methylation_matrix.gz')
 
 def computeTssMatrixAverage(infiles, outfile):
 
@@ -621,15 +638,15 @@ def computeTssMatrixAverage(infiles, outfile):
 		with open(jsonfile, 'w') as openfile:
 			openfile.write(json.dumps(bigwig_names))
 
-# find arion/methylation/s05-tss_plots.dir/tss_heatmaps_split -name "*.gz"
+# find arion/methylation/s06-tss_plots.dir/tss_heatmaps_split -name "*.gz"
 
 #############################################
 ########## 2. TSS Plot
 #############################################
 
 # @transform(computeTssMatrixAverage,
-@transform('arion/methylation/s05-tss_plots.dir/tss_heatmaps_split/*/*-methylation_matrix.gz',
-# @transform('arion/methylation/s05-tss_plots.dir/tss_heatmaps_10kb/human/methylation-matrix.gz',
+@transform('arion/methylation/s06-tss_plots.dir/tss_heatmaps_split/*/*-methylation_matrix.gz',
+# @transform('arion/methylation/s06-tss_plots.dir/tss_heatmaps_10kb/human/methylation-matrix.gz',
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
 		   r'\1_profile.png')
@@ -666,7 +683,7 @@ def plotTssProfile(infiles, outfile):
 @collate('arion/methylation/s04-methylation.dir/human/bw_tiled/*.bw',
 		 regex(r'(.*)/s04-methylation.dir/(.*)/bw_tiled/.*.bw'),
 		 add_inputs(r'arion/atacseq/summary_plots.dir/isoform_heatmaps/\2/gtf/*.gtf'),
-		 r'\1/s05-tss_plots.dir/isoform_heatmaps/\2/methylation-matrix.gz')
+		 r'\1/s06-tss_plots.dir/isoform_heatmaps/\2/methylation-matrix.gz')
 
 def computeIsoformMatrixAverage(infiles, outfile):
 
@@ -717,7 +734,7 @@ def computeIsoformMatrixAverage(infiles, outfile):
 #############################################
 
 # @transform(computeIsoformMatrixAverage,
-@transform('arion/methylation/s05-tss_plots.dir/isoform_heatmaps_5000/human/methylation-matrix.gz',
+@transform('arion/methylation/s06-tss_plots.dir/isoform_heatmaps_5000/human/methylation-matrix.gz',
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
 		   r'\1_profile.png')
