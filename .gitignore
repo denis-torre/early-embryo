@@ -6,3 +6,11 @@ settings.json
 *.sqlite
 *.pyc
 talon_stat.txt
+old
+sashimi.txt
+*mdsum*
+GEO Submission*.xlsx
+geo_submission.sh
+homer.txt
+sashimi.txt
+embryo-illumina*.R
