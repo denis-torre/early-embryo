@@ -358,24 +358,19 @@ get_junctions <- function(infile, outfile) {
 
 get_sj_counts <- function(infile, outfile) { # rewrite to count number of samples with coverage ≥1
 
-    # Read junctions
+    # Read
     junction_dataframe <- fread(infile) %>% rename('transcript_id'='isoform')
 
-    # Get SJ cols
-    sj_dataframe <- lapply(c('unique', 'multi'), function(x) {
-        columns <- colnames(junction_dataframe)[grepl(glue('SJ.out_{x}'), colnames(junction_dataframe))]
-        count_dataframe <- as.data.frame(junction_dataframe)[,c('transcript_id', columns)] %>% group_by(transcript_id) %>% summarize(across(everything(), min)) %>% column_to_rownames('transcript_id')
-        count_dataframe %>% apply(1, max) %>% as.data.frame %>% rename('max_min_sj'='.') %>% rownames_to_column('transcript_id') %>% mutate(mapping_type=glue('max_min_{x}'))
-    }) %>% bind_rows %>% pivot_wider(id_cols = transcript_id, names_from=mapping_type, values_from=max_min_sj)
+    # Get columns
+    unique_sj_cols <- colnames(junction_dataframe)[grepl('SJ.out_unique', colnames(junction_dataframe))]
 
-    # Get total counts
-    count_dataframe <- junction_dataframe %>% group_by(transcript_id) %>% summarize(min_total_unique=min(total_coverage_unique), min_total_multi=min(total_coverage_multi))
-
-    # Add total
-    merged_dataframe <- sj_dataframe %>% left_join(count_dataframe, by='transcript_id')
+    # Count
+    filtered_dataframe <- lapply(seq(1, 5), function(min_sj_reads) {
+        junction_dataframe %>% group_by(transcript_id) %>% summarize_at(all_of(unique_sj_cols), function(x) all(x>=min_sj_reads)) %>% mutate(samples_with_unique_sj_support=rowSums(across(all_of(unique_sj_cols)))) %>% select(transcript_id, samples_with_unique_sj_support) %>% mutate(min_sj_reads=min_sj_reads)
+    }) %>% bind_rows
 
     # Write
-    fwrite(merged_dataframe, file=outfile, sep='\t')
+    fwrite(filtered_dataframe, file=outfile, sep='\t')
 
 }
 
@@ -383,7 +378,7 @@ get_sj_counts <- function(infile, outfile) { # rewrite to count number of sample
 ########## 8. Filter GTF
 #############################################
 
-filter_gtf <- function(infiles, outfile) { # rewrite to filter as above
+filter_gtf <- function(infiles, outfile) {
 
     # Read GTF
     gtf <- rtracklayer::import(infiles[1])
@@ -396,7 +391,8 @@ filter_gtf <- function(infiles, outfile) { # rewrite to filter as above
     abundance_dataframe$fl_counts <- apply(abundance_dataframe[,12:ncol(abundance_dataframe)], 1, sum)
 
     # Get SJ-supported multiexonic transcripts
-    sj_multiexon_transcripts <- sj_dataframe %>% filter(max_min_unique >= 3) %>% pull(transcript_id)
+    min_sj_samples <- ifelse(grepl('human', outfile), 3, 2)
+    sj_multiexon_transcripts <- sj_dataframe %>% filter(min_sj_reads == 1 & samples_with_unique_sj_support >= min_sj_samples) %>% pull(transcript_id)
     # length(sj_multiexon_transcripts)
 
     # Get PB-supported monoexonic transcripts
@@ -420,7 +416,72 @@ filter_gtf <- function(infiles, outfile) { # rewrite to filter as above
 }
 
 #############################################
-########## 8. Split transcript GTF
+########## 10. Classify transcripts
+#############################################
+
+create_transcript_classification <- function(infiles, outfile) {
+
+    # Read GTF
+    if (grepl('SJ', outfile)==TRUE) {
+        transcript_dataframe <- rtracklayer::readGFF(infiles[1]) %>% filter(type=='exon') %>% mutate(exon_length=end-start+1) %>% group_by(gene_id, transcript_id) %>% summarize(transcript_length=sum(exon_length), nr_exons=length(exon_length))
+    } else {
+        transcript_dataframe <- rtracklayer::readGFF(infiles[1]) %>% select(-source) %>% filter(type=='exon') %>% mutate(exon_length=end-start+1) %>% group_by(gene_id, transcript_id) %>% summarize(transcript_length=sum(exon_length), nr_exons=length(exon_length))
+    }
+
+    # Read classification
+    abundance_dataframe <- fread(infiles[2]) %>% rename('transcript_id'='annot_transcript_id') %>% mutate(fl_counts=rowSums(across(starts_with('human_')))) %>% select(transcript_id, gene_novelty, transcript_novelty, fl_counts)
+
+    # Read SQANTI
+    sqanti_dataframe <- fread(infiles[3]) %>% rename('transcript_id'='isoform') %>% select(transcript_id, structural_category, subcategory)
+
+    # Merge
+    merged_dataframe <- transcript_dataframe %>% left_join(abundance_dataframe, by='transcript_id') %>% left_join(sqanti_dataframe, by='transcript_id')  %>% replace_na(list(gene_novelty='Known', transcript_novelty='Known', 'fl_counts'=0))
+
+    # Novel gene dataframe
+    gene_dataframe <- merged_dataframe %>% filter(gene_novelty != 'Known') %>% group_by(gene_id, gene_novelty) %>% summarize(sqanti_any_antisense=any(structural_category=='antisense'), sqanti_all_intergenic=all(structural_category=='intergenic'))
+
+    # Fix novelty of Antisense and Intergenic (rename antisense of intergenic genes to intergenic, rename intergenic genes called as antisense by SQANTI to antisense)
+    gene_dataframe$gene_novelty_merged <- apply(gene_dataframe, 1, function(x) {
+        if (x['gene_novelty']=='Antisense') {
+            if (x['sqanti_all_intergenic']) {
+                result <- 'Intergenic'
+            } else {
+                result <- 'Antisense'
+            }
+        } else if (x['gene_novelty'] == 'Intergenic') {
+            if (x['sqanti_any_antisense']) {
+                result <- 'Antisense'
+            } else {
+                result <- 'Intergenic'
+            }
+        }
+    })
+
+    # Merge
+    result_dataframe <- merged_dataframe %>% left_join(gene_dataframe %>% select(gene_id, gene_novelty_merged), by='gene_id') %>% replace_na(list(gene_novelty_merged='Known'))
+
+    # Fix TALON NIC issue to NNC as SQANTI, rename genomic to NNC
+    result_dataframe$Transcript_novelty <- apply(result_dataframe, 1, function(x) {
+        if (x['gene_novelty_merged']=='Known') {
+            if ((x['transcript_novelty'] == 'NIC') && (x['structural_category'] == 'novel_not_in_catalog')) {
+                result <- 'NNC'
+            } else if (x['transcript_novelty'] == 'Genomic') {
+                result <- 'NNC'
+            } else {
+                result <- x['transcript_novelty']
+            }
+        } else {
+            result <- x['gene_novelty_merged']
+        }
+    })
+
+    # Write
+    fwrite(result_dataframe, file=outfile, sep='\t')
+
+}
+
+#############################################
+########## 10. Split transcript GTF
 #############################################
 
 split_transcript_gtf <- function(infiles, outfileRoot) {
@@ -924,7 +985,7 @@ filter_blast <- function(infile, outfile) {
     #     arrange(query_acc_ver, -pct_identity) %>% filter(evalue < 0.05)
 
     # Filter (v2)
-    filtered_dataframe <- blast_dataframe %>% filter(pct_identity > 90 & alignment_length > 100 & evalue < 0.05) %>% 
+    filtered_dataframe <- blast_dataframe %>% filter(pct_identity > 95 & alignment_length > 100 & evalue < 0.05) %>% 
         mutate(genome=gsub('(.*?)_.*', '\\1', subject_acc_ver)) %>% select(query_acc_ver, genome) %>% distinct
     
     # Write

@@ -368,19 +368,24 @@ run_deseq2 <- function(infiles, outfileRoot, feature) {
 ########## 1. GO
 #############################################
 
-run_go_enrichment <- function(infile, outfile) {
+run_go_enrichment <- function(infiles, outfile) {
 
     # Library
     suppressPackageStartupMessages(require(msigdbr))
     suppressPackageStartupMessages(require(fgsea))
 
     # Read signature
-    deseq_dataframe <- fread(infile)
-    gene_signature <- deseq_dataframe %>% filter(!grepl('TALON', gene_name)) %>% group_by(gene_name) %>% slice_min(order_by=padj, n=1) %>% ungroup %>% pull(stat, gene_name)
+    deseq_dataframe <- fread(infiles[1])
+
+    # Read gene names
+    gene_dataframe <- rtracklayer::readGFF(infiles[2]) %>% select(gene_id, gene_name) %>% distinct
+
+    # Merge
+    gene_signature <- deseq_dataframe %>% left_join(gene_dataframe, by='gene_id') %>% filter(!grepl('TALON', gene_name)) %>% group_by(gene_name) %>% slice_min(order_by=padj, n=1, with_ties=FALSE) %>% ungroup %>% pull(stat, gene_name)
 
     
     # Get geneset
-    organism <- ifelse(grepl('human', infile), 'Homo sapiens', 'Mus musculus')
+    organism <- ifelse(grepl('human', outfile), 'Homo sapiens', 'Mus musculus')
     ms <- msigdbr(species = organism, category='C5', subcategory='BP')
     genesets <- ms %>% group_by(gs_name) %>% summarize(genes=list(unique(gene_symbol))) %>% pull(genes, gs_name)
 
@@ -396,28 +401,28 @@ run_go_enrichment <- function(infile, outfile) {
 ########## 2. Novelty
 #############################################
 
-run_novelty_enrichment <- function(infiles, outfile) {
+# run_novelty_enrichment <- function(infiles, outfile) {
 
-    # Library
-    suppressPackageStartupMessages(require(clusterProfiler))
-    suppressPackageStartupMessages(require(enrichplot))
+#     # Library
+#     suppressPackageStartupMessages(require(clusterProfiler))
+#     suppressPackageStartupMessages(require(enrichplot))
     
-    # Get signature
-    gene_signature <- fread(infiles[1]) %>% filter(stat!=0) %>% pull(stat, gene_id) %>% sort(decreasing=TRUE)
+#     # Get signature
+#     gene_signature <- fread(infiles[1]) %>% filter(stat!=0) %>% pull(stat, gene_id) %>% sort(decreasing=TRUE)
 
-    # Get gene status
-    gene_dataframe <- fread(infiles[2]) %>% select(gene_novelty, annot_gene_id) %>% distinct %>% filter(gene_novelty != 'Known')
+#     # Get gene status
+#     gene_dataframe <- fread(infiles[2]) %>% select(gene_novelty, annot_gene_id) %>% distinct %>% filter(gene_novelty != 'Known')
 
-    # Get results
-    gsea_results <- GSEA(gene_signature, maxGSSize=Inf, TERM2GENE=gene_dataframe, pvalueCutoff = Inf, eps=0, nPermSimple=1000000)
+#     # Get results
+#     gsea_results <- GSEA(gene_signature, maxGSSize=Inf, TERM2GENE=gene_dataframe, pvalueCutoff = Inf, eps=0, nPermSimple=1000000)
 
-    # Get dataframe
-    gsea_dataframe <- lapply(c('Antisense', 'Intergenic'), function(x) enrichplot:::gsInfo(gsea_results, x)) %>% bind_rows %>% mutate(comparison=gsub('.*all-(.*?)-.*', '\\1', infiles[1]))
+#     # Get dataframe
+#     gsea_dataframe <- lapply(c('Antisense', 'Intergenic'), function(x) enrichplot:::gsInfo(gsea_results, x)) %>% bind_rows %>% mutate(comparison=gsub('.*all-(.*?)-.*', '\\1', infiles[1]))
 
-    # Save
-    save(gsea_results, gsea_dataframe, file=outfile)
+#     # Save
+#     save(gsea_results, gsea_dataframe, file=outfile)
 
-}
+# }
 
 #############################################
 ########## 3. Novelty
@@ -430,16 +435,16 @@ run_transcript_novelty_enrichment <- function(infiles, outfile) {
     suppressPackageStartupMessages(require(enrichplot))
     
     # Get signature
-    transcript_signature <- fread(infiles[1]) %>% filter(stat!=0) %>% pull(stat, transcript_id) %>% sort(decreasing=TRUE)
+    transcript_signature <- fread(infiles[1]) %>% filter(stat!=0 & baseMean>1) %>% pull(stat, transcript_id) %>% sort(decreasing=TRUE)
 
     # Get transcript status
-    transcript_dataframe <- fread(infiles[2]) %>% mutate(transcript_novelty_v2=ifelse(gene_novelty=='Known', transcript_novelty, gene_novelty)) %>% select(transcript_novelty, annot_transcript_id) %>% filter(transcript_novelty != 'Known')
+    transcript_dataframe <- fread(infiles[2]) %>% select(Transcript_novelty, transcript_id) %>% filter(Transcript_novelty != 'Known' & transcript_id %in% names(transcript_signature))
 
     # Get results
-    gsea_results <- GSEA(transcript_signature, maxGSSize=Inf, TERM2GENE=transcript_dataframe, pvalueCutoff = Inf, eps=0)#, nPermSimple=1000000)
+    gsea_results <- GSEA(transcript_signature, maxGSSize=Inf, TERM2GENE=transcript_dataframe, pvalueCutoff = Inf, eps=0)#, nPermSimple=500000)
 
     # Get dataframe
-    gsea_dataframe <- lapply(unique(transcript_dataframe$transcript_novelty), function(x) enrichplot:::gsInfo(gsea_results, x)) %>% bind_rows %>% mutate(comparison=gsub('.*all-(.*?)-.*', '\\1', infiles[1]))
+    gsea_dataframe <- lapply(unique(transcript_dataframe$Transcript_novelty), function(x) enrichplot:::gsInfo(gsea_results, x)) %>% bind_rows %>% mutate(comparison=gsub('.*-(.*?)-transcript-.*', '\\1', infiles[1]))
 
     # Save
     save(gsea_results, gsea_dataframe, file=outfile)
@@ -722,7 +727,7 @@ filter_adjacency <- function(infile, outfile, min_adjacency) {
     
     # Library
     suppressPackageStartupMessages(require(WGCNA))
-    suppressPackageStartupMessages(require(igraph))
+    suppressPackageStartupMessages(require(network))
 
     # Load network
     load(infile)
@@ -732,22 +737,27 @@ filter_adjacency <- function(infile, outfile, min_adjacency) {
     rownames(adj) <- rownames(adjacency)
     colnames(adj) <- colnames(adjacency)
 
-    # adj <- adjacency[1:500, 1:500]
-
     # Filter and binarize
     adj[adj > as.numeric(min_adjacency)] = 1
     adj[adj != 1] = 0
 
-    # Create network and simplify
-    network <- graph.adjacency(adj)
-    network <- simplify(network)  # removes self-loops
-    network <- delete.vertices(network, degree(network)==0) # remove unconnected nodes
+    # Get genes with more than one edge
+    cols_to_keep <- rowSums(adj)>1
 
-    # Layout randomly
-    network_layout <- layout_randomly(network)
+    # Create network and simplify
+    network <- as.network(adj[cols_to_keep,cols_to_keep])
+    network <- delete.vertices(network, vid=which(!has.edges(network)))
+
+    # # Create network and simplify
+    # network <- graph.adjacency(adj)
+    # network <- simplify(network)  # removes self-loops
+    # network <- delete.vertices(network, degree(network)==0) # remove unconnected nodes
+
+    # # Convert to network
+    # network <- intergraph::asNetwork(network)
 
     # Save
-    save(network, network_layout, file=outfile)
+    save(network, file=outfile)
 
 }
 
@@ -762,9 +772,8 @@ plot_network <- function(infiles, outfile, network_parameters) {
     require(ggnetwork)
     
     # Load
-    load(infiles[2])
-    load(infiles[3])
     load(infiles[1])
+    load(infiles[2])
 
     # Check network type
     if (network_parameters[2] == 'full') {
@@ -772,25 +781,23 @@ plot_network <- function(infiles, outfile, network_parameters) {
         # Set random seed
         set.seed(as.numeric(network_parameters[1]))
 
-        # Get new layout
-        network_layout <- layout_with_fr(network, coords = network_layout, niter=1000)
+        # Create network
+        layout_dataframe <- ggnetwork(network, layout=network_parameters[3]) %>% rename('gene_id'='vertex.names') %>% left_join(module_dataframe, by='gene_id')
 
         # Write
-        save(network_layout, file=outfile)
-
-        # Create network
-        layout_dataframe <- ggnetwork(network, layout=network_layout) %>% rename('gene_id'='name') %>% left_join(module_dataframe, by='gene_id')
+        fwrite(layout_dataframe, sep='\t', file=outfile)
 
         # Plot
-        png(gsub('.rda', '.png', outfile), height=700, width=700)
+        # png(gsub('.tsv.gz', '.png', outfile), height=700, width=700)
         gp <- ggplot(layout_dataframe, aes(x = x, y = y, xend = xend, yend = yend)) +
-            geom_edges(color = "grey60", size=.05, alpha=0.1) +
+            geom_edges(color = "grey60", size=.05, alpha=0.01) +
             geom_nodes(aes(color=module_color), size=.5) +
             scale_color_manual(values=layout_dataframe %>% pull(module_color, module_color)) +
             guides(color=FALSE) +
             theme_blank()
         print(gp)
-        dev.off()
+        ggsave(gsub('.tsv.gz', '.png', outfile), height=7, width=7)
+        # dev.off()
 
     } else if (network_parameters[2] == 'subnetwork') {
 
@@ -826,6 +833,53 @@ plot_network <- function(infiles, outfile, network_parameters) {
 
     }
 
+}
+
+#############################################
+########## 8. Plot
+#############################################
+
+plot_graph <- function(infiles, outfile, additional_params) {
+
+    # Library
+    suppressPackageStartupMessages(require(igraph))
+    suppressPackageStartupMessages(require(ggnetwork))
+
+    # Load
+    load(infiles[2])
+
+    # Fix colors
+    new_colors <- c(
+        'module_1'='turquoise', # same
+        'module_5'='red', # was green
+        'module_6'='green', # was red
+        'module_34'='violetred4', # was darkmagenta
+        'module_24'='slateblue3', # was darkgrey
+        'module_3'='brown', # same
+        'module_7'='pink' # was black
+    )
+
+    # Fix
+    module_dataframe <- module_dataframe %>% rename('module_color_old'='module_color') %>% mutate(module_color=ifelse(module_name %in% names(new_colors), new_colors[module_name], module_color_old))
+
+    # Read
+    layout_dataframe <- fread(infiles[1]) %>% select(-module_name, -module_color) %>% left_join(module_dataframe, by='gene_id') %>% sample_frac(1)
+    
+    # Get parameters
+    additional_params <- as.numeric(additional_params)
+
+    # Plot
+    test_modules <- c('module_1', 'module_2', 'module_5')
+    gp <- ggplot(layout_dataframe, aes(x = x, y = y, xend = xend, yend = yend)) +
+        geom_edges(data=layout_dataframe %>% filter(!module_name %in% test_modules), color = "grey60", size=additional_params[1], alpha=additional_params[2], curvature=additional_params[3]) +
+        geom_edges(data=layout_dataframe %>% filter(module_name %in% test_modules), color = "grey60", size=additional_params[1], alpha=0) +
+        geom_nodes(aes(color=module_color), size=.75, alpha=.5) +
+        scale_color_manual(values=layout_dataframe %>% pull(module_color, module_color)) +
+        guides(color=FALSE) +
+        theme_blank()
+
+    # Save
+    ggsave(gp, filename = outfile, height = 7, width = 7)
 }
 
 #############################################
@@ -906,58 +960,119 @@ get_gene_network <- function(infiles, outfile) {
 
 }
 
+#############################################
+########## 8. Get module TSSss
+#############################################
+
+get_module_tss <- function(infiles, outfileRoot) {
+
+}
+
 
 #############################################
 ########## 8. Get module peaks
 #############################################
 
 get_module_peaks <- function(infiles, outfileRoot) {
-
+    
     # Load
     load(infiles[1])
 
     # Read GTF
-    txdb <- GenomicFeatures::makeTxDbFromGFF(infiles[2])
+    gtf <- rtracklayer::import(infiles[2])
 
     # Read peaks
     peak_ranges <- rtracklayer::import(infiles[3])
 
-    # Annotate peaks
-    annotated_ranges <- ChIPseeker::annotatePeak(peak_ranges, TxDb=txdb) #, addFlankGeneInfo=TRUE
-
-    # Get promoter peaks
-    # annotated_dataframe <- as.data.frame(annotated_ranges) %>% filter(grepl('Promoter', annotation)) %>% rename('gene_id'='geneId') %>% select(seqnames, start, end, name, score, strand, gene_id) %>% left_join(module_dataframe, by='gene_id')
-    annotated_dataframe <- as.data.frame(annotated_ranges) %>% filter(distanceToTSS==0) %>% rename('gene_id'='geneId') %>% select(seqnames, start, end, name, score, strand, gene_id) %>% left_join(module_dataframe, by='gene_id')
-
-    # Split
-    annotated_dataframes <- split(annotated_dataframe, annotated_dataframe$module_name)
+    # Filter
+    background_list <- list()
 
     # Write
-    for (module_name in names(annotated_dataframes)) {
+    for (selected_module in unique(module_dataframe$module_name)) {
         
-        # Get dataframe
-        peak_dataframe <- annotated_dataframes[[module_name]] %>% select(-gene_id, -module_name, -module_color)
+        # Filter genes
+        gene_ids <- module_dataframe %>% filter(module_name == selected_module) %>% pull(gene_id)
+
+        # Create txdb
+        txdb <- GenomicFeatures::makeTxDbFromGRanges(gtf[gtf$gene_id %in% gene_ids,])
+
+        # Annotate peaks
+        annotated_ranges <- ChIPseeker::annotatePeak(peak_ranges, TxDb=txdb)
+
+        # Get TSS peaks
+        peak_dataframe <- as.data.frame(annotated_ranges) %>% filter(distanceToTSS==0) %>% select(seqnames, start, end, name, score, strand) %>% mutate(start=start-1)
         
+        # Add to background
+        background_list[[selected_module]] <- peak_dataframe
+
         # Write
-        if (nrow(peak_dataframe) > 50) {
-            
+        if (nrow(peak_dataframe) > 10) {
+
             # Get outfile
             outfile <- glue(outfileRoot)
-            
+
             # Write
             fwrite(peak_dataframe, file=outfile, sep='\t', col.names=FALSE)
-            
+
         }
     }
 
     # Save background
-    background_dataframe <- annotated_dataframe %>% select(-gene_id, -module_name, -module_color)
+    background_dataframe <- background_list %>% bind_rows %>% distinct
 
     # Write
-    module_name <- 'background'
+    selected_module <- 'background'
     fwrite(background_dataframe, file=glue(outfileRoot), sep='\t', col.names=FALSE)
 
 }
+
+# get_module_peaks <- function(infiles, outfileRoot) {
+
+#     # Load
+#     load(infiles[1])
+
+#     # Read GTF
+#     txdb <- GenomicFeatures::makeTxDbFromGFF(infiles[2])
+
+#     # Read peaks
+#     peak_ranges <- rtracklayer::import(infiles[3])
+
+#     # Annotate peaks
+#     annotated_ranges <- ChIPseeker::annotatePeak(peak_ranges, TxDb=txdb) #, addFlankGeneInfo=TRUE
+
+#     # Get promoter peaks
+#     # annotated_dataframe <- as.data.frame(annotated_ranges) %>% filter(grepl('Promoter', annotation)) %>% rename('gene_id'='geneId') %>% select(seqnames, start, end, name, score, strand, gene_id) %>% left_join(module_dataframe, by='gene_id')
+#     annotated_dataframe <- as.data.frame(annotated_ranges) %>% filter(distanceToTSS==0) %>% rename('gene_id'='geneId') %>% select(seqnames, start, end, name, score, strand, gene_id) %>% left_join(module_dataframe, by='gene_id')
+
+#     # Split
+#     annotated_dataframes <- split(annotated_dataframe, annotated_dataframe$module_name)
+
+#     # Write
+#     for (module_name in names(annotated_dataframes)) {
+        
+#         # Get dataframe
+#         peak_dataframe <- annotated_dataframes[[module_name]] %>% select(-gene_id, -module_name, -module_color)
+        
+#         # Write
+#         if (nrow(peak_dataframe) > 50) {
+            
+#             # Get outfile
+#             outfile <- glue(outfileRoot)
+            
+#             # Write
+#             fwrite(peak_dataframe, file=outfile, sep='\t', col.names=FALSE)
+            
+#         }
+#     }
+
+#     # Save background
+#     background_dataframe <- annotated_dataframe %>% select(-gene_id, -module_name, -module_color)
+
+#     # Write
+#     module_name <- 'background'
+#     fwrite(background_dataframe, file=glue(outfileRoot), sep='\t', col.names=FALSE)
+
+# }
 
 
 # get_gene_networks <- function(infiles, outfile) {
@@ -1208,7 +1323,7 @@ filter_isoform_data <- function(infiles, outfile, file_type) {
     } else if (file_type == 'transcript_fasta') {
 
         # Read FASTA
-        talon_fasta <- Biostrings::readDNAStringSet('arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.fasta', format="fasta")
+        talon_fasta <- Biostrings::readDNAStringSet(infiles[1], format="fasta")
 
         # Subset
         filtered_fasta <- talon_fasta[transcript_ids]
@@ -1244,7 +1359,7 @@ load_isoform_data <- function(infiles, outfile) {
     if (organism == 'mouse') {
         design_dataframe <- metadata_dataframe %>% dplyr::rename('sampleID'='names', 'condition'='cell_type') %>% dplyr::select(sampleID, condition)
     } else if (organism == 'human') {
-        design_dataframe <- metadata_dataframe %>% dplyr::rename('sampleID'='names', 'condition'='cell_type') %>% dplyr::select(sampleID, condition, batch)
+        design_dataframe <- metadata_dataframe %>% dplyr::rename('sampleID'='names', 'condition'='cell_type') %>% dplyr::select(sampleID, condition)#, batch)
     }
     design_dataframe <- design_dataframe %>% mutate(condition=paste0('embryo_', condition))
 

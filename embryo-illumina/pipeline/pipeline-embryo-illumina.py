@@ -18,6 +18,7 @@ import os
 import json
 import glob
 import re
+import gtfparse
 import pandas as pd
 import numpy as np
 # from rpy2.robjects import r, pandas2ri
@@ -106,14 +107,14 @@ reference_dict = {
 		'isoseq': {
 			'genome_fasta': 'arion/datasets/reference_genomes/human/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa',
 			# 'gtf': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.gtf',
-			'gtf_filtered': 'arion/isoseq/s05-talon.dir/human/gtf/Homo_sapiens.GRCh38.102_talon-SJ_filtered.gtf'#,
+			'gtf_filtered': 'arion/isoseq/s05-talon.dir/human/gtf/Homo_sapiens.GRCh38.102_talon-SJ_filtered.gtf',
 			# 'talon_abundance': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_abundance_filtered.tsv',
 			# 'talon_junctions': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_junctions.tsv',
-			# 'transcript_fasta': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon.fasta',
+			'transcript_fasta': 'arion/isoseq/s05-talon.dir/human/gtf/Homo_sapiens.GRCh38.102_talon-SJ_filtered.fasta',
 			# 'summary_file': 'arion/isoseq/summary.dir/human-isoseq_summary.tsv',
-			# 'cpat_predictions': 'arion/isoseq/s06-cpat.dir/human/Homo_sapiens.GRCh38.102_talon-cpat.ORF_prob.best_results.tsv',
-			# 'pfam_predictions': 'arion/isoseq/s07-pfam.dir/human/human-translated_pfam.tsv',
-			# 'gtf_cds': 'arion/isoseq/s06-cpat.dir/human/gtf/Homo_sapiens.GRCh38.102_talon.cds.gtf'
+			'cpat_predictions': 'arion/isoseq/s06-cpat.dir/human/Homo_sapiens.GRCh38.102_talon-SJ_filtered-cpat.ORF_prob.best_results.tsv',
+			'pfam_predictions': 'arion/isoseq/s07-pfam.dir/human/human-translated_pfam.tsv',
+			'gtf_cds': 'arion/isoseq/s06-cpat.dir/human/gtf/Homo_sapiens.GRCh38.102_talon-SJ_filtered.cds.gtf'
 		}
 	},
 	'mouse': {
@@ -888,62 +889,71 @@ def runDESeq2(infiles, outfiles, outfileRoot):
 # ########## 2. Excel
 # #############################################
 
-# # @follows(runDESeq2)
+# @follows(runDESeq2)
 
-# @collate('arion/illumina/s05-differential_expression.dir/human/isoseq/human_isoseq-*-gene-deseq.tsv',
-# 		 regex(r'(.*isoseq)-.*.tsv'),
-# 		 r'\1-merged_v7.xlsx')
+@collate('arion/illumina/s05-differential_expression.dir/human/human-*-gene-deseq.tsv',
+		 regex(r'(.*human)-.*.tsv'),
+		 add_inputs('arion/isoseq/s05-talon.dir/human/gtf/Homo_sapiens.GRCh38.102_talon-SJ_filtered.gtf'),
+		 'arion/figures/supplementary_tables/SupplementaryTable7.xlsx')
+		#  r'\1-merged.xlsx')
 
-# def createExcel(infiles, outfile):
+def createExcel(infiles, outfile):
 
-# 	# Read differential expression
-# 	dataframes = {x.split('-')[-3]: pd.read_table(x).drop(['gene_source', 'lfcSE', 'stat'], axis=1) for x in infiles}
+	# Split infiles
+	gtf_file = infiles[0][1]
+	infiles = [x[0] for x in infiles]
 
-# 	# Read Dalit's genelist
-# 	dalit_genelist = pd.read_csv('arion/datasets/dalit/Developmental_genelist_by_Dalit.csv').set_index('Gene_Symbol')['Classification'].to_dict()
+	# Read differential expression
+	dataframes = {x.split('-')[-3]: pd.read_table(x).drop(['lfcSE', 'stat'], axis=1) for x in infiles}
 
-# 	# Initialize ExcelWriter
-# 	with pd.ExcelWriter(outfile) as writer:
+	# Read gene names
+	gene_dataframe = gtfparse.read_gtf(gtf_file)[['gene_id', 'gene_name']].drop_duplicates()
 
-# 		# Loop
-# 		for comparison in ['1C_vs_2C', '2C_vs_4C', '4C_vs_8C', '8C_vs_morula', 'morula_vs_blastocyst']:
+	# Read Dalit's genelist
+	# dalit_genelist = pd.read_csv('arion/datasets/dalit/Developmental_genelist_by_Dalit.csv').set_index('Gene_Symbol')['Classification'].to_dict()
 
-# 			# Get data
-# 			dataframe = dataframes[comparison]
+	# Initialize ExcelWriter
+	with pd.ExcelWriter(outfile) as writer:
 
-# 			# Split
-# 			comparison_groups = comparison.split('_vs_')
+		# Loop
+		for comparison in ['1C_vs_2C', '2C_vs_4C', '4C_vs_8C', '8C_vs_morula', 'morula_vs_blastocyst']:
 
-# 			# Significance
-# 			dataframe['gene_biotype'] = [rowData['gene_biotype'].replace('_', ' ') if rowData['gene_biotype'] != 'not_available' else rowData['gene_category'].replace('_', ' ') for index, rowData in dataframe.iterrows()]
+			# Get data
+			dataframe = gene_dataframe.merge(dataframes[comparison], on='gene_id', how='right').sort_values('padj')
 
-# 			# Significance
-# 			dataframe['significant'] = [rowData['padj'] < 0.05 and abs(rowData['log2FoldChange']) > 1 for index, rowData in dataframe.iterrows()]
-# 			dataframe['differential_expression'] = ['Not significant' if not rowData['significant'] else 'Up in '+comparison_groups[1] if rowData['log2FoldChange'] > 0 else 'Down in '+comparison_groups[1] for index, rowData in dataframe.iterrows()]
+			# Split
+			comparison_groups = comparison.split('_vs_')
 
-# 			# Round
-# 			dataframe['baseMean'] = dataframe['baseMean'].round(1)
-# 			dataframe['log2FoldChange'] = dataframe['log2FoldChange'].round(1)
-# 			dataframe['pvalue'] = ['{:.2e}'.format(x) for x in dataframe['pvalue']]
-# 			dataframe['padj'] = ['{:.2e}'.format(x) for x in dataframe['padj']]
+			# Significance
+			# dataframe['gene_biotype'] = [rowData['gene_biotype'].replace('_', ' ') if rowData['gene_biotype'] != 'not_available' else rowData['gene_category'].replace('_', ' ') for index, rowData in dataframe.iterrows()]
 
-# 			# Dalit geneset
-# 			dataframe['Developmental category'] = [dalit_genelist.get(x, '').replace('_', ' ').title() for x in dataframe['gene_name']]
+			# Significance
+			dataframe['significant'] = [rowData['padj'] < 0.05 and abs(rowData['log2FoldChange']) > 1 for index, rowData in dataframe.iterrows()]
+			dataframe['differential_expression'] = ['Not significant' if not rowData['significant'] else 'Up in '+comparison_groups[1] if rowData['log2FoldChange'] > 0 else 'Down in '+comparison_groups[1] for index, rowData in dataframe.iterrows()]
+
+			# Round
+			dataframe['baseMean'] = dataframe['baseMean'].round(1)
+			dataframe['log2FoldChange'] = dataframe['log2FoldChange'].round(1)
+			dataframe['pvalue'] = ['{:.2e}'.format(x) for x in dataframe['pvalue']]
+			dataframe['padj'] = ['{:.2e}'.format(x) for x in dataframe['padj']]
+
+			# Dalit geneset
+			# dataframe['Developmental category'] = [dalit_genelist.get(x, '').replace('_', ' ').title() for x in dataframe['gene_name']]
 			
-# 			# Rename
-# 			dataframe = dataframe.rename(columns={'gene_id': 'Gene ID', 'gene_name': 'Gene name', 'gene_biotype': 'Gene biotype', 'baseMean': 'Average expression', 'pvalue': 'P-value', 'padj': 'Adjusted P-value', 'differential_expression': 'Differentially expressed'}).drop(['significant', 'gene_category'], axis=1)
+			# Rename
+			dataframe = dataframe.rename(columns={'gene_id': 'Gene ID', 'gene_name': 'Gene name', 'baseMean': 'Average expression', 'pvalue': 'P-value', 'padj': 'Adjusted P-value', 'differential_expression': 'Differentially expressed'}).drop(['significant'], axis=1)
 
-# 			# Write
-# 			dataframe.to_excel(writer, sheet_name=comparison, index=False)
+			# Write
+			dataframe.to_excel(writer, sheet_name=comparison, index=False)
 			
-# 			# Modify
-# 			workbook = writer.book
-# 			worksheet = writer.sheets[comparison]
-# 			format1 = workbook.add_format({'align': 'center'})
-# 			worksheet.set_column('A:J', 20, format1)
-# 			max_logfc = dataframe['log2FoldChange'].abs().max()
-# 			worksheet.conditional_format('E1:E'+str(len(dataframe.index)+1), {'type': '3_color_scale', 'min_value': -max_logfc, 'min_type': 'num', 'mid_value': 0, 'mid_type': 'num', 'max_value': max_logfc, 'max_type': 'num', 'min_color': '#67a9cf', 'mid_color': '#ffffff', 'max_color': '#ef8a62'})
-# 			worksheet.autofilter(0, 0, len(dataframe.index), len(dataframe.columns) - 1)
+			# Modify
+			workbook = writer.book
+			worksheet = writer.sheets[comparison]
+			format1 = workbook.add_format({'align': 'center'})
+			worksheet.set_column('A:J', 20, format1)
+			max_logfc = dataframe['log2FoldChange'].abs().max()
+			worksheet.conditional_format('D1:D'+str(len(dataframe.index)+1), {'type': '3_color_scale', 'min_value': -max_logfc, 'min_type': 'num', 'mid_value': 0, 'mid_type': 'num', 'max_value': max_logfc, 'max_type': 'num', 'min_color': '#67a9cf', 'mid_color': '#ffffff', 'max_color': '#ef8a62'})
+			worksheet.autofilter(0, 0, len(dataframe.index), len(dataframe.columns) - 1)
 
 #######################################################
 #######################################################
@@ -959,12 +969,18 @@ def runDESeq2(infiles, outfiles, outfileRoot):
 
 @transform('arion/illumina/s05-differential_expression.dir/*/*-gene-deseq.tsv',
 		   regex(r'(.*)/s05-differential_expression.dir/(.*)/(.*)-gene-deseq.tsv'),
-		   r'\1/s07-enrichment.dir/\2/go/\3-go_enrichment.tsv')
+		   add_inputs(r'arion/isoseq/s05-talon.dir/\2/gtf/*-SJ_filtered.gtf'),
+		   r'\1/s06-enrichment.dir/\2/go/\3-go_enrichment.tsv')
 
-def runGoEnrichment(infile, outfile):
+def runGoEnrichment(infiles, outfile):
 
 	# Run
-	run_r_job('run_go_enrichment', infile, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'))
+	run_r_job('run_go_enrichment', infiles, outfile, conda_env='env', W='00:30', GB=50, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# rm -r arion/illumina/s06-enrichment.dir/*/go
+# find arion/illumina/s06-enrichment.dir/*/go -name "*.log" | js
+# find arion/illumina/s06-enrichment.dir/*/go -name "*.err" | xargs wc -l
+# find arion/illumina/s06-enrichment.dir/*/go -name "*.tsv" | wc -l
 
 #############################################
 ########## 2. Novelty
@@ -972,17 +988,17 @@ def runGoEnrichment(infile, outfile):
 
 # @follows(runDESeq2)
 
-@transform('arion/illumina/s05-differential_expression.dir/*/*-gene-deseq.tsv',
-		   regex(r'(.*)/s05-differential_expression.dir/(.*)/(.*)-gene-deseq.tsv'),
-		   add_inputs(r'arion/isoseq/s05-talon.dir/\2/*abundance_filtered.tsv'),
-		   r'\1/s07-enrichment.dir/\2/novelty/\3-novelty_enrichment.rda')
+# @transform('arion/illumina/s05-differential_expression.dir/*/*-gene-deseq.tsv',
+# 		   regex(r'(.*)/s05-differential_expression.dir/(.*)/(.*)-gene-deseq.tsv'),
+# 		   add_inputs(r'arion/isoseq/s05-talon.dir/\2/*abundance_filtered.tsv'),
+# 		   r'\1/s06-enrichment.dir/\2/novelty/\3-novelty_enrichment.rda')
 
-def runNoveltyEnrichment(infiles, outfile):
+# def runNoveltyEnrichment(infiles, outfile):
 
-	# Run
-	run_r_job('run_novelty_enrichment', infiles, outfile, modules=['R/4.0.3'], W='01:00', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+# 	# Run
+# 	run_r_job('run_novelty_enrichment', infiles, outfile, modules=['R/4.0.3'], W='01:00', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
-# rm -r arion/illumina/s07-enrichment.dir/human/novelty
+# rm -r arion/illumina/s06-enrichment.dir/human/novelty
 
 #############################################
 ########## 3. Transcript Novelty
@@ -990,15 +1006,19 @@ def runNoveltyEnrichment(infiles, outfile):
 
 # @follows(runDESeq2)
 
-@transform('arion/illumina/s05-differential_expression.dir/*/all/*-transcript-deseq.tsv',
-		   regex(r'(.*)/s05-differential_expression.dir/(.*)/all/(.*)-transcript-deseq.tsv'),
-		   add_inputs(r'arion/isoseq/s05-talon.dir/\2/*abundance_filtered.tsv'),
-		   r'\1/s07-enrichment.dir/\2/transcript_novelty/\3-transcript_novelty_enrichment.rda')
+@transform('arion/illumina/s05-differential_expression.dir/*human*/*-transcript-deseq.tsv',
+		   regex(r'(.*)/s05-differential_expression.dir/(.*)/(.*)-transcript-deseq.tsv'),
+		   add_inputs(r'arion/isoseq/s05-talon.dir/\2/gtf/*-SJ_filtered-transcript_classification.tsv'),
+		   r'\1/s06-enrichment.dir/\2/transcript_novelty/\3-transcript_novelty_enrichment.rda')
 
 def runTranscriptNoveltyEnrichment(infiles, outfile):
 
 	# Run
-	run_r_job('run_transcript_novelty_enrichment', infiles, outfile, modules=['R/4.0.3'], W='01:00', GB=5, n=1, run_locally=False, print_outfile=True, print_cmd=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+	run_r_job('run_transcript_novelty_enrichment', infiles, outfile, modules=['R/4.0.3'], W='30:00', GB=30, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+# find arion/illumina/s06-enrichment.dir/*/transcript_novelty -name "*.log" | js
+# find arion/illumina/s06-enrichment.dir/*/transcript_novelty -name "*.err" | xargs wc -l
+# cat arion/illumina/s06-enrichment.dir/*/transcript_novelty/*.err
 
 #############################################
 ########## 4. Domain
@@ -1009,12 +1029,16 @@ def runTranscriptNoveltyEnrichment(infiles, outfile):
 @transform('arion/illumina/s05-differential_expression.dir/*/*-transcript-deseq.tsv',
 		   regex(r'(.*)/s05-differential_expression.dir/(.*)/(.*)-transcript-deseq.tsv'),
 		   add_inputs(r'arion/isoseq/s07-pfam.dir/\2/\2-translated_pfam.tsv'),
-		   r'\1/s07-enrichment.dir/\2/domain/\3-domain_enrichment.tsv')
+		   r'\1/s06-enrichment.dir/\2/domain/\3-domain_enrichment.tsv')
 
 def runDomainEnrichment(infiles, outfile):
 
 	# Run
-	run_r_job('run_domain_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'))
+	run_r_job('run_domain_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# find arion/illumina/s06-enrichment.dir/*/domain -name "*.log" | jsc
+# find arion/illumina/s06-enrichment.dir/*/domain -name "*.err" | xargs wc -l
+# find arion/illumina/s06-enrichment.dir/*/domain -name "*.tsv" | wc -l
 
 # #############################################
 # ########## 5. Repeats
@@ -1025,12 +1049,16 @@ def runDomainEnrichment(infiles, outfile):
 @transform('arion/illumina/s05-differential_expression.dir/*/*-transcript-deseq.tsv',
 		   regex(r'(.*)/s05-differential_expression.dir/(.*)/(.*)-transcript-deseq.tsv'),
 		   add_inputs(r'arion/isoseq/s08-repeatmasker.dir/\2/*_repeatmasker.tsv'),
-		   r'\1/s07-enrichment.dir/\2/repeat/\3-repeat_enrichment.tsv')
+		   r'\1/s06-enrichment.dir/\2/repeat/\3-repeat_enrichment.tsv')
 
 def runRepeatEnrichment(infiles, outfile):
 
 	# Run
-	run_r_job('run_repeat_enrichment', infiles, outfile, conda_env='env', W='00:15', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'))
+	run_r_job('run_repeat_enrichment', infiles, outfile, conda_env='env', W='00:30', GB=15, n=1, run_locally=False, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# find arion/illumina/s06-enrichment.dir/*/repeat -name "*.log" | jsc
+# find arion/illumina/s06-enrichment.dir/*/repeat -name "*.err" | xargs wc -l
+# find arion/illumina/s06-enrichment.dir/*/repeat -name "*.tsv" | wc -l
 
 #######################################################
 #######################################################
@@ -1143,30 +1171,30 @@ def getModulePreservation(infiles, outfile):
 def filterAdjacency(infile, outfiles, outfileRoot):
 
 	# Loop
-	for min_adjacency in [0.1, 0.3]:
+	for min_adjacency in [.07, 0.071, 0.072, 0.073, 0.074, 0.075, 0.076, 0.077, 0.078, 0.079, 0.08, 0.081, 0.082, 0.083, 0.084, 0.085, 0.086, 0.087, 0.088, 0.089, 0.09, 0.091, 0.092, 0.093, 0.094, 0.095, 0.096, 0.097, 0.098, 0.099, 0.1]:
 
 		# Get outfile
 		outfile = outfileRoot.format(**locals())
 
 		# Run
-		run_r_job('filter_adjacency', infile, outfile, q='sla', additional_params=min_adjacency, modules=['R/4.0.3'], W='00:10', GB=10, n=5, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+		run_r_job('filter_adjacency', infile, outfile, q='sla', additional_params=min_adjacency, modules=['R/4.0.3'], W='10:00', GB=10, n=10, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
+# find arion/illumina/s07-wgcna.dir/human/graph/networks -name "*adjacency*.log" | js
 
 #############################################
 ########## 7. Filter adjacency
 #############################################
 
-# @subdivide(filterAdjacency,
-@subdivide(('arion/illumina/s07-wgcna.dir/human/graph/plots/*.rda'), #, 'arion/illumina/s07-wgcna.dir/human/graph/networks/human-gene_network_signed_adjacency_0.1.rda'
-# @subdivide(('arion/illumina/s07-wgcna.dir/human/graph/networks/human-gene_network_signed_adjacency_0.1.rda'), #, 'arion/illumina/s07-wgcna.dir/human/graph/networks/human-gene_network_signed_adjacency_0.1.rda'
-		   regex(r'(.*)/.*/(.*signed_adjacency_)(...)(.*).rda'),
-		   add_inputs('arion/illumina/s07-wgcna.dir/human/network/human-gene_network_signed_modules.rda', r'\1/networks/\2\3.rda'),
-		   r'\1/plots/\2\3\4_*.rda',
-		   r'\1/plots/\2\3\4_{layout}_{network_type}_{random_seed}.rda')
+@subdivide('arion/illumina/s07-wgcna.dir/human/graph/networks/*08*.rda',
+		   regex(r'(.*)/.*/(.*).rda'),
+		   add_inputs('arion/illumina/s07-wgcna.dir/human/network/human-gene_network_signed_modules.rda'),
+		   r'\1/plots/\2_*.tsv.gz',
+		   r'\1/plots/\2_{layout}_{network_type}_{random_seed}.tsv.gz')
 
 def plotNetwork(infiles, outfiles, outfileRoot):
 
 	# Loop
-	for random_seed in [x for x in range(3)]:
+	for random_seed in [x for x in range(10)]:
 		for network_type in ['full']:
 			for layout in ['fruchtermanreingold']:
 
@@ -1174,9 +1202,56 @@ def plotNetwork(infiles, outfiles, outfileRoot):
 				outfile = outfileRoot.format(**locals())
 
 				# Run
-				run_r_job('plot_network', infiles, outfile, run_locally=False, q='premium', print_outfile=False, additional_params=[random_seed, network_type, layout], modules=['R/4.0.3'], W='06:00', GB=50, n=1, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+				run_r_job('plot_network', infiles, outfile, run_locally=False, q='sla', print_outfile=False, additional_params=[random_seed, network_type, layout], modules=['R/4.0.3'], W='03:00', GB=20, n=5, stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
 
-# find arion/illumina/s07-wgcna.dir/human/graph/plots -name "*0.1_*png"
+#############################################
+########## 8. Plot
+#############################################
+
+@subdivide('arion/illumina/s07-wgcna.dir/human/graph/old/plots-4/human-gene_network_signed_adjacency_0.1_fruchtermanreingold_full_64.tsv.gz',
+		   regex(r'(.*)/old.*/(.*).tsv.gz'),
+		   add_inputs('arion/illumina/s07-wgcna.dir/human/network/human-gene_network_signed_modules.rda'),
+		   r'\1/plots_final/\2_*.tsv.gz',
+		   r'\1/plots_final/\2_size_{edge_size}_edgealpha_{edge_alpha}_curvature_{curvature}.png')
+
+def plotGraph(infiles, outfiles, outfileRoot):
+
+	# Loop
+	for edge_size in [0.5]:
+		for edge_alpha in [0.005]:
+			for curvature in [-0.1, 0, 0.1]:
+			# for curvature in [round(x, 2) for x in np.arange(-0.1, 0.1, 0.01)]:
+
+				# Get outfile
+				outfile = outfileRoot.format(**locals())
+
+				# Run
+				run_r_job('plot_graph', infiles, outfile, run_locally=False, q='sla', print_outfile=False, additional_params=[edge_size, edge_alpha, curvature], modules=['R/4.0.3'], W='01:00', GB=10, n=5)#, stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
+
+	# Loop
+	# for random_seed in [x for x in range(10)]:
+	# 	for network_type in ['full']:
+	# 		for layout in ['fruchtermanreingold']:
+
+	# 			# Get outfile
+	# 			outfile = outfileRoot.format(**locals())
+
+	# 			# Run
+	# 			run_r_job('plot_network', infiles, outfile, run_locally=False, q='sla', print_outfile=False, additional_params=[random_seed, network_type, layout], modules=['R/4.0.3'], W='03:00', GB=20, n=5, stdout=outfile.replace('.tsv.gz', '.log'), stderr=outfile.replace('.tsv.gz', '.err'))
+
+#############################################
+########## 7. Filter adjacency
+#############################################
+
+# @transform(inputFile,
+# 		   suffix('.suffix'),
+# 		   '.new_suffix')
+
+# def transformFunction(infile, outfile):
+# 	print(infile, outfile)
+
+
+# find arion/illumina/s07-wgcna.dir/human/graph/plots -name "*log"
 
 #############################################
 ########## 8. Get module TSSs
@@ -1185,13 +1260,16 @@ def plotNetwork(infiles, outfiles, outfileRoot):
 @subdivide(getGeneModules,
 		   regex(r'(.*)/network/(.*)-.*rda'),
 		   add_inputs(r'arion/isoseq/s05-talon.dir/\2/gtf/*_talon-SJ_filtered.gtf', r'arion/atacseq/s05-counts.dir/\2/\2-atacseq_consensus_peaks.bed'),
-		   r'\1/motifs/peaks/tss/\2-module_*.bed',
-		   r'\1/motifs/peaks/tss/\2-{module_name}-peaks.bed')
+		   r'\1/motifs/peaks/tss_intersect/\2-module_*.bed',
+		   r'\1/motifs/peaks/tss_intersect/\2-{selected_module}-peaks.bed')
 
 def getModulePeaks(infiles, outfiles, outfileRoot):
 
 	# Run
 	run_r_job('get_module_peaks', infiles, outfileRoot, run_locally=False, conda_env='env', W='00:10', GB=10, n=1, modules=['R/4.0.3'], stdout=os.path.join(os.path.dirname(outfileRoot), 'job.log'), stderr=os.path.join(os.path.dirname(outfileRoot), 'job.err'))
+
+# wc -l arion/illumina/s07-wgcna.dir/human/motifs-1/peaks/tss/*.bed
+# wc -l arion/illumina/s07-wgcna.dir/human/motifs/peaks/tss/*.bed
 
 #############################################
 ########## 9. Get module motifs
@@ -1201,19 +1279,20 @@ def getModulePeaks(infiles, outfiles, outfileRoot):
 @transform('arion/illumina/s07-wgcna.dir/human/motifs/peaks/*/*module*.bed',
 		   regex(r'(.*)/peaks/(.*?)(-.*)-peaks.bed'),
 		   add_inputs(r'arion/datasets/reference_genomes/human/*.dna_sm.primary_assembly.fa', r'\1/peaks/\2*background*.bed'),
-		   r'\1/homer_200/\2\3/knownResults.html')
+		   r'\1/homer_given/\2\3/knownResults.html')
 
 def getModuleMotifs(infiles, outfile):
 
 	# Command (add genome)
 	outdir = os.path.dirname(outfile)
-	cmd_str = ''' findMotifsGenome.pl {infiles[0]} {infiles[1]} {outdir}/ -size 200 -bg {infiles[2]} '''.format(**locals())
+	cmd_str = ''' findMotifsGenome.pl {infiles[0]} {infiles[1]} {outdir}/ -size given -bg {infiles[2]} '''.format(**locals())
 
 	# Run
 	run_job(cmd_str, outfile, print_cmd=False, modules=['homer/4.10'], W='06:00', GB=10, n=1, jobname=outfile.split('/')[-2]+'-homer', stdout=outfile.replace('knownResults.html', 'job.log'), stderr=outfile.replace('knownResults.html', 'job.err'))
 
 # rm -r arion/illumina/s07-wgcna.dir/human/motifs/homer
-# find arion/illumina/s07-wgcna.dir/human/motifs/homer_given/tss -name "job.log" | js
+# find arion/illumina/s07-wgcna.dir/human/motifs/homer_given/tss -name "job.log" | jsc
+# find arion/illumina/s07-wgcna.dir/human/motifs/homer_given/tss_intersect -name "job.log" | jsc
 
 #######################################################
 #######################################################
@@ -1462,12 +1541,12 @@ def getPSIClusters(infile, outfile):
 
 def isoformFilterJobs():
 	for organism in ['human']: #, 'mouse'
-		filtered_gtf = glob.glob('arion/illumina/s03-alignment.dir/{organism}/all/gtf/*102_talon-all-SJ_filtered.gtf'.format(**locals()))[0]
+		filtered_gtf = glob.glob('arion/isoseq/s05-talon.dir/{organism}/gtf/*.102_talon-SJ_filtered.gtf'.format(**locals()))[0]
 		for file_type in ['gtf_cds', 'cpat_predictions', 'pfam_predictions', 'transcript_fasta']:
 			infile = reference_dict[organism]['isoseq'][file_type]
 			infile_basename, infile_extension = os.path.basename(infile).rsplit('.', 1)
 			infiles = [infile, filtered_gtf]
-			outfile = 'arion/illumina/s10-isoform_switching.dir/{organism}/filtered_data/{infile_basename}_filtered.{infile_extension}'.format(**locals())
+			outfile = 'arion/illumina/s09-isoform_switching.dir/{organism}/filtered_data/{infile_basename}_filtered.{infile_extension}'.format(**locals())
 			yield [infiles, outfile, file_type]
 
 @files(isoformFilterJobs)
@@ -1475,15 +1554,16 @@ def isoformFilterJobs():
 def filterIsoformData(infiles, outfile, file_type):
 
 	# Run
+	# print(infiles, outfile, file_type)
 	run_r_job('filter_isoform_data', infiles, outfile, additional_params=file_type, conda_env='env')
 
 #############################################
 ########## 2. Load data
 #############################################
 
-@collate('arion/illumina/s10-isoform_switching.dir/human/filtered_data/*',
+@collate('arion/illumina/s09-isoform_switching.dir/human/filtered_data/*',
 		 regex(r'(.*)/(.*)/filtered_data/.*'),
-		 add_inputs(r'arion/illumina/s04-expression.dir/\2/all/\2_all-sample_metadata.txt', comparison_file),
+		 add_inputs(r'arion/illumina/s04-expression.dir/\2/\2-sample_metadata.txt', comparison_file),
 		 r'\1/\2/\2-isoforms.rda')
 
 def loadIsoformData(infiles, outfile):
@@ -1492,8 +1572,7 @@ def loadIsoformData(infiles, outfile):
 	infiles = [x[0] for x in infiles]+[infiles[0][1], infiles[0][2]]
 
 	# Run
-	print(infiles, outfile)
-	# run_r_job('load_isoform_data', infiles, outfile, conda_env='env', W="06:00", GB=30, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+	run_r_job('load_isoform_data', infiles, outfile, conda_env='env', W="06:00", GB=30, n=1, run_locally=False, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
 #############################################
 ########## 3. Run
