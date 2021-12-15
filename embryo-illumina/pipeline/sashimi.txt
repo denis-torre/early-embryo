@@ -1,12 +1,201 @@
+# usage: ggsashimi.py [-h] -b BAM -c COORDINATES [-o OUT_PREFIX] [-S OUT_STRAND] [-M MIN_COVERAGE] [-j JUNCTIONS_BED] [-g GTF] [-s STRAND] [--shrink] [-O OVERLAY] [-A AGGR] [-C COLOR_FACTOR] [--alpha ALPHA] [-P PALETTE] [-L LABELS] [--fix-y-scale] [--height HEIGHT]
+#                     [--ann-height ANN_HEIGHT] [--width WIDTH] [--base-size BASE_SIZE] [-F OUT_FORMAT] [-R OUT_RESOLUTION] [--debug-info] [--version]
+
+# Create sashimi plot for a given genomic region
+
+# optional arguments:
+#   -h, --help            show this help message and exit
+#   -b BAM, --bam BAM     Individual bam file or file with a list of bam files. In the case of a list of files the format is tsv: 1col: id for bam file, 2col: path of bam file, 3+col: additional columns
+#   -c COORDINATES, --coordinates COORDINATES
+#                         Genomic region. Format: chr:start-end. Remember that bam coordinates are 0-based
+#   -o OUT_PREFIX, --out-prefix OUT_PREFIX
+#                         Prefix for plot file name [default=sashimi]
+#   -S OUT_STRAND, --out-strand OUT_STRAND
+#                         Only for --strand other than 'NONE'. Choose which signal strand to plot: <both> <plus> <minus> [default=both]
+#   -M MIN_COVERAGE, --min-coverage MIN_COVERAGE
+#                         Minimum number of reads supporting a junction to be drawn [default=1]
+#   -j JUNCTIONS_BED, --junctions-bed JUNCTIONS_BED
+#                         Junction BED file name [default=no junction file]
+#   -g GTF, --gtf GTF     Gtf file with annotation (only exons is enough)
+#   -s STRAND, --strand STRAND
+#                         Strand specificity: <NONE> <SENSE> <ANTISENSE> <MATE1_SENSE> <MATE2_SENSE> [default=NONE]
+#   --shrink              Shrink the junctions by a factor for nicer display [default=False]
+#   -O OVERLAY, --overlay OVERLAY
+#                         Index of column with overlay levels (1-based)
+#   -A AGGR, --aggr AGGR  Aggregate function for overlay: <mean> <median> <mean_j> <median_j>. Use mean_j | median_j to keep density overlay but aggregate junction counts [default=no aggregation]
+#   -C COLOR_FACTOR, --color-factor COLOR_FACTOR
+#                         Index of column with color levels (1-based)
+#   --alpha ALPHA         Transparency level for density histogram [default=0.5]
+#   -P PALETTE, --palette PALETTE
+#                         Color palette file. tsv file with >=1 columns, where the color is the first column. Both R color names and hexadecimal values are valid
+#   -L LABELS, --labels LABELS
+#                         Index of column with labels (1-based) [default=1]
+#   --fix-y-scale         Fix y-scale across individual signal plots [default=False]
+#   --height HEIGHT       Height of the individual signal plot in inches [default=2]
+#   --ann-height ANN_HEIGHT
+#                         Height of annotation plot in inches [default=1.5]
+#   --width WIDTH         Width of the plot in inches [default=10]
+#   --base-size BASE_SIZE
+#                         Base font size of the plot in pch [default=14]
+#   -F OUT_FORMAT, --out-format OUT_FORMAT
+#                         Output file format: <pdf> <svg> <png> <jpeg> <tiff> [default=pdf]
+#   -R OUT_RESOLUTION, --out-resolution OUT_RESOLUTION
+#                         Output file resolution in PPI (pixels per inch). Applies only to raster output formats [default=300]
+#   --debug-info          Show several system information useful for debugging purposes [default=None]
+#   --version             show program's version number and exit
+
+# TALONG000067447
 /sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
     --bam arion/geo_illumina/summary.dir/sashimi/settings/all-bams.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --coordinates 3:98624708-98629032 \
+    --min-coverage 900 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --width 10 \
+    --base-size 22 \
+    --ann-height 2 \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-all_v2 \
+    --out-format png
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/liu-bams.txt \
     --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
     --coordinates 3:98624708-98629032 \
     --min-coverage 500 \
     --overlay 3 \
     --aggr mean_j \
     --fix-y-scale \
-    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-all \
+    --width 10 \
+    --base-size 22 \
+    --ann-height 2 \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-liu_v2 \
+    --out-format png
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/yan-bams.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --coordinates 3:98624708-98629032 \
+    --min-coverage 130 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --width 10 \
+    --base-size 22 \
+    --ann-height 2 \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-yan_v2 \
+    --out-format png
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/xue-bams.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --coordinates 3:98624708-98629032 \
+    --min-coverage 100 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --width 10 \
+    --height 2.5 \
+    --base-size 22 \
+    --ann-height 2 \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-xue_v2 \
+    --out-format png
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/macaque-bams_no_oocyte.txt \
+    --gtf arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered.gtf \
+    --coordinates 2:177473616-177478293 \
+    --min-coverage 10 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --width 13 \
+    --height 2.5 \
+    --base-size 22 \
+    --ann-height 2 \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-macaque_no_oocyte_v2 \
+    --out-format png
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/macaque-bams_no_oocyte.txt \
+    --gtf arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered.gtf \
+    --coordinates 2:177473616-177478293 \
+    --min-coverage 10 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-macaque_no_oocyte_v2 \
+    --out-format png
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/marmoset-bams.txt \
+    --gtf arion/geo_illumina/s05-primates.dir/marmoset/gtf/marmoset-hg38_filtered_lifted.gtf \
+    --coordinates chr15:84273386-84278246 \
+    --min-coverage 0 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-marmoset \
+    --out-format png
+
+# TALONG000091240
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/liu-bams.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --coordinates 2:64058816-64081512 \
+    --min-coverage 500 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --width 10 \
+    --base-size 22 \
+    --ann-height 2 \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000091240-liu \
+    --out-format png
+
+# TALONG000080965
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/all-bams.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --coordinates 6:143605771-143632548 \
+    --min-coverage 100 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --width 10 \
+    --base-size 22 \
+    --ann-height 2 \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000080965-all \
+    --out-format png
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/liu-bams.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --coordinates 6:143605771-143632548 \
+    --min-coverage 500 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --width 10 \
+    --base-size 22 \
+    --ann-height 2 \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000080965-liu \
+    --out-format png
+
+
+
+# Old
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/macaque-bams_no_oocyte.txt \
+    --gtf arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered.gtf \
+    --coordinates 2:177473616-177478293 \
+    --min-coverage 10 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-macaque_no_oocyte \
     --out-format png
 
 /sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-1.0.0-gene/ggsashimi.py \
@@ -39,4 +228,91 @@
     --aggr mean_j \
     --fix-y-scale \
     --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-macaque_no_oocyte \
+    --out-format png
+
+
+### GENE ID TEST
+
+# TALONG000067447
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-gene_id/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/all-bams_subset_v2.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --gene_id TALONG000067447 \
+    --min-coverage 900 \
+    --overlay 3 \
+    --aggr mean_j \
+    --fix-y-scale \
+    --width 10 \
+    --base-size 22 \
+    --ann-height 2 \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-all_test \
+    --out-format png
+
+
+    --coordinates 3:98624708-98629032 \
+
+
+
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-gene_id/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/macaque-bams.txt \
+    --gtf arion/isoseq/s10-liftover.dir/human/merged/hg38ToRheMac10/Homo_sapiens.GRCh38.102_talon.cds-hg38ToRheMac1_filtered-gene_id.gtf \
+    --gene_id TALONG000067447 \
+    --min-coverage 50 \
+    --overlay 3 \
+    --aggr mean_j \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-macaque_test2 \
+    --out-format png
+
+
+# TALONG000067447
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-gene_id/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/all-bams.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --gene_id TALONG000091240 \
+    --min-coverage 50 \
+    --overlay 3 \
+    --fix-y-scale \
+    --aggr mean_j \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-human \
+    --out-format png
+
+# TALONG000067447
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-gene_id/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/all-bams_subset_v2.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --gene_id TALONG000067447 \
+    --overlay 3 \
+    --fix-y-scale \
+    --aggr mean_j \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000067447-human_test_junctions \
+    --out-format png
+
+    --coordinates 3:98624708-98629032 \
+
+
+    --min-coverage 50 \
+
+
+# TALONG000091240
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-gene_id/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/all-bams_subset_v2.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --gene_id TALONG000091240 \
+    --overlay 3 \
+    --fix-y-scale \
+    --aggr mean_j \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000091240-human_test \
+    --out-format png
+
+# TALONG000080965
+/sc/arion/work/torred23/libraries/ggsashimi/ggsashimi-gene_id/ggsashimi.py \
+    --bam arion/geo_illumina/summary.dir/sashimi/settings/all-bams.txt \
+    --gtf arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf \
+    --gene_id TALONG000091240 \
+    --min-coverage 50 \
+    --overlay 3 \
+    --fix-y-scale \
+    --aggr mean_j \
+    --out-prefix arion/geo_illumina/summary.dir/sashimi/plots/TALONG000080965-all \
     --out-format png
