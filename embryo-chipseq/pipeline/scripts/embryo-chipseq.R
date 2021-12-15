@@ -38,7 +38,7 @@ get_peak_counts <- function(infile, outfile) {
     chip <- dba.blacklist(chip, blacklist=DBA_BLACKLIST_HG38, greylist=FALSE)
 
     # Count
-    chip <- dba.count(chip, summits=500, bUseSummarizeOverlaps=FALSE)
+    chip <- dba.count(chip, summits=1000, bUseSummarizeOverlaps=FALSE)
 
     # Save
     save(chip, file=outfile)
@@ -71,6 +71,57 @@ get_size_factors <- function(infile, outfile) {
 
     # Write
     fwrite(normalization_dataframe, file=outfile, sep='\t')
+
+}
+
+#############################################
+########## 6. Consensus peaks
+#############################################
+
+get_consensus_peaks <- function(infile, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(DiffBind))
+
+    # Load
+    load(infile)
+
+    # Get peaks
+    peak_dataframe <- dba.peakset(chip, bRetrieve=TRUE) %>% as.data.frame %>% mutate(id=paste0('chip_peak_', 1:n()), score=100) %>% select(seqnames, start, end, id, score, strand) %>% mutate(seqnames=gsub('chr', '', seqnames), start=start-1)
+
+    # Write
+    fwrite(peak_dataframe, file=outfile, sep='\t', col.names=FALSE)
+
+}
+
+#############################################
+########## 7. Differential peaks
+#############################################
+
+get_differential_peaks <- function(infile, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(DiffBind))
+
+    # Load
+    load(infile)
+
+    # Normalize
+    chip <- dba.normalize(chip)
+
+    # Get contrasts
+    chip <- dba.contrast(chip, minMembers = 2)
+
+    # Filter
+    if (grepl('H3K4me3', infile)) {
+        chip$contrasts <- chip$contrasts[c(1,3)]
+    }
+
+    # Analyze
+    chip <- dba.analyze(chip)
+
+    # Save
+    save(chip, file=outfile)
 
 }
 

@@ -427,7 +427,7 @@ def getSampleMetadata(infiles, outfile):
 
 @transform(getSampleMetadata,
 		   suffix('_samples.csv'),
-		   '_peak_counts.rda')
+		   '_peak_counts_broad.rda')
 
 def getPeakCounts(infile, outfile):
 
@@ -497,6 +497,36 @@ def mergeScaledBigWig(infiles, outfile):
 		if not os.path.exists(outfile):
 			os.system('cp {infiles[0]} {outfile}'.format(**locals()))
 
+#############################################
+########## 6. Consensus peaks
+#############################################
+
+# @transform(getPeakCounts,
+@transform('arion/chipseq/s05-counts.dir/human/*/human-*-chipseq_peak_counts*.rda',
+		   regex(r'(.*)_peak_counts(.*).rda'),
+		   r'\1_consensus_peaks\2.bed')
+
+def getConsensusPeaks(infile, outfile):
+
+	# Run
+	run_r_job('get_consensus_peaks', infile, outfile, conda_env='env', W='00:30', GB=10, n=1, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
+
+# find /hpc/users/torred23/pipelines/projects/early-embryo/arion/chipseq/s05-counts.dir/human -name "*consensus*" | xargs rm
+
+#############################################
+########## 7. Differential peaks
+#############################################
+
+# @transform(getPeakCounts,
+@transform(('arion/chipseq/s05-counts.dir/human/H3K4me3/human-H3K4me3-chipseq_peak_counts_broad.rda', 'arion/chipseq/s05-counts.dir/human/H3K27ac/human-H3K27ac-chipseq_peak_counts.rda'),
+		   regex(r'(.*)_peak_counts(.*)'),
+		   r'\1_differential_peaks\2')
+
+def getDifferentialPeaks(infile, outfile):
+
+	# Run
+	run_r_job('get_differential_peaks', infile, outfile, modules=['R/4.0.3'], W='01:00', GB=50, n=1, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
 #######################################################
 #######################################################
 ########## S6. TSS coverage
@@ -507,18 +537,18 @@ def mergeScaledBigWig(infiles, outfile):
 ########## 1. Get TSS BED
 #############################################
 
-def transcriptJobs():
-	for organism, reference_info in reference_dict.items():
-		infile = reference_info['filtered_gtf']
-		outfile = 'arion/chipseq/s06-tss_coverage.dir/{organism}/{organism}-tss.bed'.format(**locals())
-		yield [infile, outfile]
+# def transcriptJobs():
+# 	for organism, reference_info in reference_dict.items():
+# 		infile = reference_info['filtered_gtf']
+# 		outfile = 'arion/chipseq/s06-tss_coverage.dir/{organism}/{organism}-tss.bed'.format(**locals())
+# 		yield [infile, outfile]
 
-@files(transcriptJobs)
+# @files(transcriptJobs)
 
-def getTssBed(infile, outfile):
+# def getTssBed(infile, outfile):
 
-	# Run
-	run_r_job('get_tss_bed', infile, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+# 	# Run
+# 	run_r_job('get_tss_bed', infile, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 #############################################
 ########## 2. Intersect peaks
@@ -528,7 +558,7 @@ def getTssBed(infile, outfile):
 
 @transform('arion/chipseq/s04-peaks.dir/human/macs2/*/*.broadPeak',
 		   regex(r'(.*)/s04-peaks.dir/(.*)/macs2/(.*)/.*.broadPeak'),
-		   add_inputs(r'\1/s06-tss_coverage.dir/\2/\2-tss.bed'),
+		   add_inputs(r'arion/atacseq/s06-tss_coverage.dir/\2/\2-tss_500bp.bed'),
 		   r'\1/s06-tss_coverage.dir/\2/intersect/\3-tss_peaks_intersect.bed')
 
 def intersectTssPeaks(infiles, outfile):
@@ -549,37 +579,37 @@ def intersectTssPeaks(infiles, outfile):
 ########## 1.1 Split TSS by isoform class
 #############################################
 
-def tssJobs():
-	for organism, reference_info in reference_dict.items():
-		infiles = list(reference_info.values())
-		outfile = 'arion/chipseq/s07-tss_scores.dir/{organism}/bed/Known_TSS.bed'.format(**locals())
-		yield [infiles, outfile]
+# def tssJobs():
+# 	for organism, reference_info in reference_dict.items():
+# 		infiles = list(reference_info.values())
+# 		outfile = 'arion/chipseq/s07-tss_scores.dir/{organism}/bed/Known_TSS.bed'.format(**locals())
+# 		yield [infiles, outfile]
 
-@files(tssJobs)
+# @files(tssJobs)
 
-def splitTssTypes(infiles, outfile):
+# def splitTssTypes(infiles, outfile):
 
-	# Run
-	run_r_job('split_tss_types', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+# 	# Run
+# 	run_r_job('split_tss_types', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 #############################################
 ########## 2. Shuffle TSS BED
 #############################################
 
-@follows(splitTssTypes)
+# @follows(splitTssTypes)
 
-@transform('arion/chipseq/s07-tss_scores.dir/*/bed/*.bed',
-		   regex(r'(.*)/(.*)/bed/(.*).bed'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*.nochr.chromsizes', r'arion/datasets/reference_genomes/\2/*_transcript.bed'),
-		   r'\1/\2/bed/\3_shuffled.bed')
+# @transform('arion/chipseq/s07-tss_scores.dir/*/bed/*.bed',
+# 		   regex(r'(.*)/(.*)/bed/(.*).bed'),
+# 		   add_inputs(r'arion/datasets/reference_genomes/\2/*.nochr.chromsizes', r'arion/datasets/reference_genomes/\2/*_transcript.bed'),
+# 		   r'\1/\2/bed/\3_shuffled.bed')
 
-def shuffleTssBed(infiles, outfile):
+# def shuffleTssBed(infiles, outfile):
 
-	# Command
-	cmd_str = ''' bedtools shuffle -excl {infiles[2]} -i {infiles[0]} -g {infiles[1]} > {outfile} '''.format(**locals()) # -chrom
+# 	# Command
+# 	cmd_str = ''' bedtools shuffle -excl {infiles[2]} -i {infiles[0]} -g {infiles[1]} > {outfile} '''.format(**locals()) # -chrom
 	
-	# Run
-	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:05', GB=5, n=1, print_cmd=False, ow=False)
+# 	# Run
+# 	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:05', GB=5, n=1, print_cmd=False, ow=False)
 
 #############################################
 ########## 3. TSS overlap
@@ -587,7 +617,7 @@ def shuffleTssBed(infiles, outfile):
 
 def tssScoreJobs():
 	for organism in ['human']:
-		bed_files = glob.glob('arion/chipseq/s07-tss_scores.dir/{organism}/bed/*.bed'.format(**locals()))
+		bed_files = glob.glob('arion/atacseq/s07-tss_scores.dir/{organism}/bed*/*bp.bed'.format(**locals()))
 		bigwig_files = glob.glob('arion/chipseq/s05-counts.dir/{organism}/merged_bw/*.bw'.format(**locals()))
 		for bigwig_file in bigwig_files:
 			bigwig_name = os.path.basename(bigwig_file)[:-len('.bw')]
@@ -609,6 +639,34 @@ def getTssScores(infiles, outfile):
 	# Run
 	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:10', GB=30, n=1, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
 
+#############################################
+########## 4. Intersect peaks
+#############################################
+
+# @follows(runGenrich, getTssRange)
+def tssTypeJobs():
+	for dataset in ['H3K4me3', 'H3K27ac']:
+		peak_file = 'arion/chipseq/s05-counts.dir/human/H3K4me3/human-H3K4me3-chipseq_consensus_peaks_broad.bed' if dataset == 'H3K4me3' else 'arion/chipseq/s05-counts.dir/human/H3K27ac/human-H3K27ac-chipseq_consensus_peaks.bed'
+		for tss_type in ['Known', 'Novel', 'Antisense', 'Intergenic']:
+			infiles = [peak_file, 'arion/atacseq/s07-tss_scores.dir/human/bed/{tss_type}_TSS.bed'.format(**locals())]
+			outfile = 'arion/chipseq/s07-tss_scores.dir/human/tss_consensus_peak_intersection/{dataset}-{tss_type}_consensus_TSS_peak_intersection.bed'.format(**locals())
+			yield [infiles, outfile]
+	# for cell_type in ['1C', '2C', '4C', '8C', 'morula', 'ICM', 'TE']:
+	# 	for tss_type in ['Known', 'Novel', 'Antisense', 'Intergenic']:
+	# 		infiles = ['arion/atacseq/s04-peaks.dir/human/genrich/combined/human_{cell_type}/human_{cell_type}-genrich.narrowPeak'.format(**locals()), 'arion/atacseq/s07-tss_scores.dir/human/bed/{tss_type}_TSS.bed'.format(**locals())]
+	# 		outfile = 'arion/atacseq/s07-tss_scores.dir/human/tss_consensus_peak_intersection/human-{cell_type}_{tss_type}_TSS_peak_intersection.bed'.format(**locals())
+	# 		yield [infiles, outfile]
+
+@files(tssTypeJobs)
+
+def intersectTssTypePeaks(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bedtools intersect -wa -a {infiles[0]} -b {infiles[1]} > {outfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:30', n=1, GB=25, print_cmd=False)#, stdout=outfile.replace('.narrowPeak', '.log'), stderr=outfile.replace('.narrowPeak', '.err'))
+
 #######################################################
 #######################################################
 ########## Plots
@@ -625,34 +683,34 @@ def getTssScores(infiles, outfile):
 ########## 1.1 Split TSS by isoform class
 #############################################
 
-def tssJobs():
-	for organism, reference_info in reference_dict.items():
-		infiles = list(reference_info.values())
-		outfile = 'arion/chipseq/summary_plots.dir/tss_heatmaps/{organism}/bed/Known_TSS.bed'.format(**locals())
-		yield [infiles, outfile]
+# def tssJobs():
+# 	for organism, reference_info in reference_dict.items():
+# 		infiles = list(reference_info.values())
+# 		outfile = 'arion/chipseq/summary_plots.dir/tss_heatmaps/{organism}/bed/Known_TSS.bed'.format(**locals())
+# 		yield [infiles, outfile]
 
-@files(tssJobs)
+# @files(tssJobs)
 
-def splitTSS(infiles, outfile):
+# def splitTSS(infiles, outfile):
 
-	# Run
-	run_r_job('split_tss', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+# 	# Run
+# 	run_r_job('split_tss', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 #############################################
 ########## 1.2 Get background
 #############################################
 
-@collate('arion/chipseq/s07-tss_scores.dir/human/bed/*_shuffled.bed',
-		 regex(r'(.*)/s07-tss_scores.dir/(.*)/bed/.*.bed'),
-		 r'\1/summary_plots.dir/tss_heatmaps/\2/bed/Shuffled_TSS.bed')
+# @collate('arion/chipseq/s07-tss_scores.dir/human/bed/*_shuffled.bed',
+# 		 regex(r'(.*)/s07-tss_scores.dir/(.*)/bed/.*.bed'),
+# 		 r'\1/summary_plots.dir/tss_heatmaps/\2/bed/Shuffled_TSS.bed')
 
-def mergeShuffledTSS(infiles, outfile):
+# def mergeShuffledTSS(infiles, outfile):
 
-	# Get infiles
-	infiles_str = ' '.join(infiles)
+# 	# Get infiles
+# 	infiles_str = ' '.join(infiles)
 
-	# Merge
-	os.system('cat {infiles_str} > {outfile}'.format(**locals()))
+# 	# Merge
+# 	os.system('cat {infiles_str} > {outfile}'.format(**locals()))
 
 #############################################
 ########## 1.3 Matrix
@@ -662,7 +720,7 @@ def mergeShuffledTSS(infiles, outfile):
 
 @collate('arion/chipseq/s05-counts.dir/human/merged_bw/*.bw',
 		 regex(r'(.*)/s05-counts.dir/(.*)/merged_bw/.*_(.*).bw'),
-		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps/\2/bed/*.bed'),
+		 add_inputs(r'arion/atacseq/s07-tss_scores.dir/\2/bed*/*_TSS.bed'),
 		 r'\1/summary_plots.dir/tss_heatmaps/\2/\3/\2-\3-matrix.gz')
 
 def computeTssMatrixAverage(infiles, outfile):
@@ -700,9 +758,9 @@ def computeTssMatrixAverage(infiles, outfile):
 	'''.format(**locals())
 
 	# Run
-	# run_job(cmd_str, outfile, conda_env='env', W='10:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
+	run_job(cmd_str, outfile, conda_env='env', W='10:00', n=6, GB=4, print_cmd=False, ow=False, wait=False)
 
-	# # Write samples
+	# Write samples
 	bigwig_names = [os.path.basename(x)[:-len('.bw')].replace('human_', '').replace('_', ' ').split(' H3')[0] for x in bigwig_str.split(' ')]
 	jsonfile = outfile.replace('.gz', '.json')
 	if not os.path.exists(jsonfile):

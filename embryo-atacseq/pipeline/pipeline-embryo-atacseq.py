@@ -89,8 +89,8 @@ all_illumina_fastq = glob.glob('arion/atacseq/s01-fastq.dir/*/*/*/*.f*q.gz')
 # Reference
 reference_dict = {
 	'human': {
-		'filtered_gtf': 'arion/illumina/s04-alignment.dir/human/all/gtf/Homo_sapiens.GRCh38.102_talon-all-SJ_filtered.gtf',
-		'talon_abundance': 'arion/isoseq/s05-talon.dir/human/Homo_sapiens.GRCh38.102_talon_abundance_filtered.tsv'		
+		'filtered_gtf': 'arion/isoseq/s05-talon.dir/human/gtf/Homo_sapiens.GRCh38.102_talon-SJ_filtered.gtf',
+		'transcript_classification': 'arion/isoseq/s05-talon.dir/human/gtf/Homo_sapiens.GRCh38.102_talon-SJ_filtered-transcript_classification.tsv'		
 	}
 }
 
@@ -541,6 +541,20 @@ def getConsensusPeaks(infile, outfile):
 	# Run
 	run_r_job('get_consensus_peaks', infile, outfile, conda_env='env', W='00:30', GB=10, n=1, stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))
 
+#############################################
+########## 7. Differential peaks
+#############################################
+
+# @transform(getPeakCounts,
+@transform('arion/atacseq/s05-counts.dir/human/human-atacseq_peak_counts.rda',
+		   suffix('_peak_counts.rda'),
+		   '_differential_peaks.rda')
+
+def getDifferentialPeaks(infile, outfile):
+
+	# Run
+	run_r_job('get_differential_peaks', infile, outfile, modules=['R/4.0.3'], W='01:00', GB=50, n=1, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+
 #######################################################
 #######################################################
 ########## S6. TSS coverage
@@ -565,55 +579,78 @@ def getTssBed(infile, outfile):
 	run_r_job('get_tss_bed', infile, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 #############################################
+########## 2. Get coverage
+#############################################
+
+@transform('arion/atacseq/s06-tss_coverage.dir/human/human-tss_500bp.bed',
+		 	regex(r'(.*)/(.*)/(.*)/(.*).bed'),
+		 	add_inputs(r'\1/s03-alignment.dir/\3/bowtie2/results/*/*_filtered.bam'),
+		 	r'\1/\2/\3/\4-bedtools_coverage.tsv')
+
+def getTssCoverage(infiles, outfile):
+
+	# Parameters
+	colnames = '\t'.join(['chr', 'start', 'end', 'transcript_id', 'score', 'strand']+[os.path.basename(x)[:-len('_filtered.bam')] for x in infiles[1:]])
+	bam_str = ' '.join(infiles[1:])
+
+	# Command
+	cmd_str = ''' echo "{colnames}" > {outfile} && bedtools multicov -bams {bam_str} -bed {infiles[0]} >> {outfile} '''.format(**locals())
+
+	# Run
+	run_job(cmd_str, outfile, modules=['BEDTools/2.29.0'], W='03:00', GB=30, n=1, print_outfile=False, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+# rm /hpc/users/torred23/pipelines/projects/early-embryo/arion/atacseq/s06-tss_coverage.dir/human/human-tss_500bp_subset-bedtools_coverage.*
+
+#############################################
 ########## 2. TSS sample dataframe
 #############################################
 
-@follows(getTssBed)
+# @follows(getTssBed)
 
-@transform('arion/atacseq/s06-tss_coverage.dir/*/*-tss_500bp*.bed',
-		   regex(r'(.*)/(s06-tss_coverage.dir)/(.*)/(.*).bed'),
-		   add_inputs(r'arion/atacseq/s03-alignment.dir/\3/bowtie2/results/*/*_filtered.bam'),
-		   r'\1/\2/\3/\4_samples.csv')
+# @transform('arion/atacseq/s06-tss_coverage.dir/*/*-tss_500bp*.bed',
+# 		   regex(r'(.*)/(s06-tss_coverage.dir)/(.*)/(.*).bed'),
+# 		   add_inputs(r'arion/atacseq/s03-alignment.dir/\3/bowtie2/results/*/*_filtered.bam'),
+# 		   r'\1/\2/\3/\4_samples.csv')
 
-def getSampleMetadataTss(infiles, outfile):
+# def getSampleMetadataTss(infiles, outfile):
 
-	# Split
-	bed_file = infiles[0]
-	bam_files = infiles[1:]
+# 	# Split
+# 	bed_file = infiles[0]
+# 	bam_files = infiles[1:]
 
-	# Sample dataframe
-	sample_dataframe = pd.DataFrame([{
-			'SampleID': x.split('/')[-2],
-			'bamReads': x,
-			'PeakCaller': 'bed',
-			'PeakFormat': 'bed',
-			'Peaks': bed_file
-		} for x in bam_files])
+# 	# Sample dataframe
+# 	sample_dataframe = pd.DataFrame([{
+# 			'SampleID': x.split('/')[-2],
+# 			'bamReads': x,
+# 			'PeakCaller': 'bed',
+# 			'PeakFormat': 'bed',
+# 			'Peaks': bed_file
+# 		} for x in bam_files])
 
-	# Add information
-	sample_dataframe['Tissue'] = [x.split('_')[1] for x in sample_dataframe['SampleID']]
-	sample_dataframe['Replicate'] = [x.split('_')[-1] for x in sample_dataframe['SampleID']]
+# 	# Add information
+# 	sample_dataframe['Tissue'] = [x.split('_')[1] for x in sample_dataframe['SampleID']]
+# 	sample_dataframe['Replicate'] = [x.split('_')[-1] for x in sample_dataframe['SampleID']]
 
-	# Outdir
-	outdir = os.path.dirname(outfile)
-	if not os.path.exists(outdir):
-		os.makedirs(outdir)
+# 	# Outdir
+# 	outdir = os.path.dirname(outfile)
+# 	if not os.path.exists(outdir):
+# 		os.makedirs(outdir)
 
-	# Write
-	sample_dataframe.to_csv(outfile, index=False)
+# 	# Write
+# 	sample_dataframe.to_csv(outfile, index=False)
 
 #############################################
 ########## 3. Get counts
 #############################################
 
-@transform(getSampleMetadataTss,
-		   suffix('.csv'),
-		   '_counts.rda')
+# @transform(getSampleMetadataTss,
+# 		   suffix('.csv'),
+# 		   '_counts.rda')
 
-def getTssCounts(infile, outfile):
+# def getTssCounts(infile, outfile):
 
-	# Run
-	run_r_job('get_tss_counts', infile, outfile, conda_env='env', W='03:00', GB=50, n=1, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
+# 	# Run
+# 	run_r_job('get_tss_counts', infile, outfile, conda_env='env', W='03:00', GB=50, n=1, stdout=outfile.replace('.rda', '.log'), stderr=outfile.replace('.rda', '.err'))
 
 #############################################
 ########## 4. Intersect peaks
@@ -655,7 +692,7 @@ def tssJobs():
 def splitTssTypes(infiles, outfile):
 
 	# Run
-	run_r_job('split_tss_types', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
+	run_r_job('split_tss_types', infiles, outfile, run_locally=False, conda_env='env', stdout=outfile.replace('.bed', '.log'), stderr=outfile.replace('.bed', '.err'))#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 #############################################
 ########## 2. Shuffle TSS BED
@@ -665,8 +702,8 @@ def splitTssTypes(infiles, outfile):
 
 @transform('arion/atacseq/s07-tss_scores.dir/*/bed/*.bed',
 		   regex(r'(.*)/(.*)/bed/(.*).bed'),
-		   add_inputs(r'arion/datasets/reference_genomes/\2/*.nochr.chromsizes', r'arion/datasets/reference_genomes/\2/*_transcript.bed'),
-		   r'\1/\2/bed/\3_shuffled.bed')
+		   add_inputs(r'arion/datasets/reference_genomes/\2/*.nochr.chromsizes', r'arion/datasets/reference_genomes/\2/*to_exclude_intergenic.bed'),
+		   r'\1/\2/bed_shuffled/\3_shuffled.bed')
 
 def shuffleTssBed(infiles, outfile):
 
@@ -677,12 +714,28 @@ def shuffleTssBed(infiles, outfile):
 	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:05', GB=5, n=1, print_cmd=False, ow=False)
 
 #############################################
-########## 3. TSS overlap
+########## 3. Merge shuffled TSS
+#############################################
+
+@collate(shuffleTssBed,
+		 regex(r'(.*)/(.*)/(.*)/.*?_(.*)_shuffled.bed'),
+		 r'\1/\2/\3/Shuffled_\4.bed')
+
+def mergeShuffledTSS(infiles, outfile):
+
+	# Get infiles
+	infiles_str = ' '.join(infiles)
+
+	# Merge
+	os.system('cat {infiles_str} > {outfile}'.format(**locals()))
+
+#############################################
+########## 4. TSS overlap
 #############################################
 
 def tssScoreJobs():
 	for organism in ['human']:
-		bed_files = glob.glob('arion/atacseq/s07-tss_scores.dir/{organism}/bed/*.bed'.format(**locals()))
+		bed_files = glob.glob('arion/atacseq/s07-tss_scores.dir/{organism}/bed*/*bp.bed'.format(**locals()))
 		bigwig_files = glob.glob('arion/atacseq/s05-counts.dir/{organism}/merged_bw/*.bw'.format(**locals()))
 		for bigwig_file in bigwig_files:
 			bigwig_name = os.path.basename(bigwig_file)[:-len('.bw')]
@@ -703,6 +756,32 @@ def getTssScores(infiles, outfile):
 	
 	# Run
 	run_job(cmd_str, outfile, modules=['ucsc-utils/2020-03-17'], W='00:10', GB=30, n=1, print_cmd=False, stdout=outfile.replace('.tsv', '.log'), stderr=outfile.replace('.tsv', '.err'))
+
+#############################################
+########## 5. Intersect peaks
+#############################################
+
+# @follows(runGenrich, getTssRange)
+def tssTypeJobs():
+	for tss_type in ['Known', 'Novel', 'Antisense', 'Intergenic']:
+		infiles = ['arion/atacseq/s05-counts.dir/human/human-atacseq_consensus_peaks.bed'.format(**locals()), 'arion/atacseq/s07-tss_scores.dir/human/bed/{tss_type}_TSS.bed'.format(**locals())]
+		outfile = 'arion/atacseq/s07-tss_scores.dir/human/tss_consensus_peak_intersection/human-{tss_type}_consensus_TSS_peak_intersection.bed'.format(**locals())
+		yield [infiles, outfile]
+	# for cell_type in ['1C', '2C', '4C', '8C', 'morula', 'ICM', 'TE']:
+	# 	for tss_type in ['Known', 'Novel', 'Antisense', 'Intergenic']:
+	# 		infiles = ['arion/atacseq/s04-peaks.dir/human/genrich/combined/human_{cell_type}/human_{cell_type}-genrich.narrowPeak'.format(**locals()), 'arion/atacseq/s07-tss_scores.dir/human/bed/{tss_type}_TSS.bed'.format(**locals())]
+	# 		outfile = 'arion/atacseq/s07-tss_scores.dir/human/tss_consensus_peak_intersection/human-{cell_type}_{tss_type}_TSS_peak_intersection.bed'.format(**locals())
+	# 		yield [infiles, outfile]
+
+@files(tssTypeJobs)
+
+def intersectTssTypePeaks(infiles, outfile):
+
+	# Command
+	cmd_str = ''' bedtools intersect -wa -a {infiles[0]} -b {infiles[1]} > {outfile} '''.format(**locals())
+	
+	# Run
+	run_job(cmd_str, outfile, modules=['bedtools/2.29.2'], W='00:30', n=1, GB=25, print_cmd=False)#, stdout=outfile.replace('.narrowPeak', '.log'), stderr=outfile.replace('.narrowPeak', '.err'))
 
 #######################################################
 #######################################################
@@ -881,34 +960,18 @@ def plotIsoformProfile2(infiles, outfile):
 ########## 1.1 Split TSS by isoform class
 #############################################
 
-def tssJobs():
-	for organism, reference_info in reference_dict.items():
-		infiles = list(reference_info.values())
-		outfile = 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/{organism}/bed/Known_TSS.bed'.format(**locals())
-		yield [infiles, outfile]
+# def tssJobs():
+# 	for organism, reference_info in reference_dict.items():
+# 		infiles = list(reference_info.values())
+# 		outfile = 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/{organism}/bed/Known_TSS.bed'.format(**locals())
+# 		yield [infiles, outfile]
 
-@files(tssJobs)
+# @files(tssJobs)
 
-def splitTSS(infiles, outfile):
+# def splitTSS(infiles, outfile):
 
-	# Run
-	run_r_job('split_tss', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
-
-#############################################
-########## 1.2 Get background
-#############################################
-
-@collate('arion/atacseq/s07-tss_scores.dir/human/bed/*_shuffled.bed',
-		 regex(r'(.*)/s07-tss_scores.dir/(.*)/bed/.*.bed'),
-		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/\2/bed/Shuffled_TSS.bed')
-
-def mergeShuffledTSS(infiles, outfile):
-
-	# Get infiles
-	infiles_str = ' '.join(infiles)
-
-	# Merge
-	os.system('cat {infiles_str} > {outfile}'.format(**locals()))
+# 	# Run
+# 	run_r_job('split_tss', infiles, outfile, run_locally=False, conda_env='env')#, modules=[], W='00:15', GB=10, n=1, run_locally=False, print_outfile=False, print_cmd=False)
 
 #############################################
 ########## 1.3 Matrix
@@ -918,7 +981,7 @@ def mergeShuffledTSS(infiles, outfile):
 
 @collate('arion/atacseq/s03-alignment.dir/human/bowtie2/results/*/*_filtered_scaled.bw',
 		 regex(r'(.*)/s03-alignment.dir/(.*)/bowtie2/results/.*/.*.bw'),
-		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/\2/bed/*.bed'),
+		 add_inputs(r'\1/s07-tss_scores.dir/\2/bed/*_TSS.bed', r'\1/s07-tss_scores.dir/\2/bed_shuffled/*shuffled_merged.bed'),
 		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/\2/\2-matrix.gz')
 
 def computeTssMatrix(infiles, outfile):
@@ -969,8 +1032,8 @@ def computeTssMatrix(infiles, outfile):
 ### Averaged
 @collate('arion/atacseq/s05-counts.dir/human/merged_bw/*.bw',
 		 regex(r'(.*)/s05-counts.dir/(.*)/merged_bw/.*.bw'),
-		 add_inputs(r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/\2/bed/*.bed'),
-		 r'\1/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/\2/\2-matrix.gz')
+		 add_inputs(r'\1/s07-tss_scores.dir/\2/bed*/*_TSS.bed'),
+		 r'\1/summary_plots.dir/tss_heatmaps/\2/\2-matrix.gz')
 
 def computeTssMatrixAverage(infiles, outfile):
 
@@ -1022,11 +1085,11 @@ def computeTssMatrixAverage(infiles, outfile):
 #############################################
 
 # 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled/human/human-matrix.gz', 
-@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/human/human-matrix.gz'),
+@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps/human/human-matrix.gz'),
 # @transform(computeTssMatrix,
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
-		   r'\1_v4.png')
+		   r'\1.png')
 
 def plotTssHeatmap(infiles, outfile):
 
@@ -1051,18 +1114,18 @@ def plotTssHeatmap(infiles, outfile):
 					# --zMax 60 30 80 120 150 50 60 \
 
 	# Run
-	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=5, print_cmd=False, ow=True, run_locally=True)
+	run_job(cmd_str, outfile, conda_env='env', W='00:30', n=2, GB=5, print_cmd=False, ow=True, run_locally=False)
 
 #############################################
 ########## 1.3 Plot
 #############################################
 
 # 'arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled/human/human-matrix.gz', 
-@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps_all_reps_scaled_average_new_background/human/human-matrix.gz'),
+@transform(('arion/atacseq/summary_plots.dir/tss_heatmaps/human/human-matrix.gz'),
 # @transform(computeTssMatrix,
 		   regex(r'(.*).gz'),
 		   add_inputs(r'\1.json'),
-		   r'\1_profile_v3.png')
+		   r'\1_profile.png')
 
 def plotTssProfile(infiles, outfile):
 
@@ -1147,7 +1210,7 @@ def createShuffledGTF(infiles, outfile):
 @collate('arion/datasets/evolutionary_conservation/human/*.bw',
 		 regex(r'.*/evolutionary_conservation/(.*)/(.*).bw'),
 		 add_inputs(r'arion/atacseq/summary_plots.dir/evolutionary_conservation_background/\1/gtf/*.gtf'),
-		 r'arion/atacseq/summary_plots.dir/evolutionary_conservation_background/\1/matrix/\1-\2-matrix.gz')
+		 r'arion/atacseq/summary_plots.dir/evolutionary_conservation_nobackground/\1/matrix/\1-\2-matrix.gz')
 
 def computePhyloMatrix(infiles, outfile):
 
@@ -1158,12 +1221,13 @@ def computePhyloMatrix(infiles, outfile):
 
 	# Split
 	gtfs = infiles[0][1:]
+	gtfs = [x for x in gtfs if 'Shuffled' not in x]
 
 	# Get GTF order
 	gtf_str = ' '.join(pd.DataFrame({
 		'gtf': gtfs,
 		'order': [order_dict['gtf'][os.path.basename(x).split('.')[0]] for x in gtfs]
-	}).sort_values('order')['gtf'])
+	})) #.sort_values('order')['gtf']
 
 	# Command
 	cmd_str = ''' computeMatrix scale-regions -S {infiles[0][0]} \

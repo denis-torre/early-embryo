@@ -96,11 +96,37 @@ get_consensus_peaks <- function(infile, outfile) {
     load(infile)
 
     # Get peaks
-    peak_dataframe <- dba.peakset(atac, bRetrieve=TRUE) %>% as.data.frame %>% mutate(id=paste0('atac_peak_', 1:n()), score=100) %>% select(seqnames, start, end, id, score, strand) %>% mutate(seqnames=gsub('chr', '', seqnames))
+    peak_dataframe <- dba.peakset(atac, bRetrieve=TRUE) %>% as.data.frame %>% mutate(id=paste0('atac_peak_', 1:n()), score=100) %>% select(seqnames, start, end, id, score, strand) %>% mutate(seqnames=gsub('chr', '', seqnames), start=start-1)
 
     # Write
     fwrite(peak_dataframe, file=outfile, sep='\t', col.names=FALSE)
 
+}
+
+#############################################
+########## 7. Differential peaks
+#############################################
+
+get_differential_peaks <- function(infile, outfile) {
+
+    # Library
+    suppressPackageStartupMessages(require(DiffBind))
+
+    # Load
+    load(infile)
+
+    # Normalize
+    atac <- dba.normalize(atac)
+
+    # Get contrasts
+    atac <- dba.contrast(atac, minMembers = 2)
+    atac$contrasts <- atac$contrasts[c(1,7,12,18,20,21)]
+
+    # Analyze
+    atac <- dba.analyze(atac)
+
+    # Save
+    save(atac, file=outfile)
 
 }
 
@@ -169,18 +195,20 @@ split_tss_types <- function(infiles, outfile) {
     # Read GTF
     gtf <- rtracklayer::readGFF(infiles[1])
 
-    # Read abundance
-    abundance_dataframe <- fread(infiles[2]) %>% rename('transcript_id'='annot_transcript_id') %>% mutate(transcript_novelty_v2=ifelse(gene_novelty=='Known', transcript_novelty, gene_novelty)) %>% select(transcript_id, gene_novelty, transcript_novelty_v2)
+    # Read classification
+    classification_dataframe <- fread(infiles[2]) %>% select(transcript_id, Transcript_novelty)
+    head(classification_dataframe)
 
     # Extract TSSs
     transcript_dataframe <- gtf %>% filter(type=='exon') %>% group_by(transcript_id, strand) %>% summarize(chr=seqid, strand=strand, tss=ifelse(strand=='+', min(start), max(end)), tss_coordinates=paste0('chr', chr, ':', tss)) %>% distinct %>% select(transcript_id, tss_coordinates, strand)
+    head(transcript_dataframe)
 
     # Merge
-    merged_dataframe <- transcript_dataframe %>% left_join(abundance_dataframe, by='transcript_id') %>% replace_na(list(gene_novelty='Known', transcript_novelty='Known')) %>% replace_na(list(transcript_novelty_v2='Known'))
+    merged_dataframe <- transcript_dataframe %>% left_join(classification_dataframe, by='transcript_id')
     head(merged_dataframe)
 
     # Pivot
-    tss_dataframe <- merged_dataframe %>% group_by(tss_coordinates, strand) %>% summarize(transcript_types=paste(unique(transcript_novelty_v2), collapse=',')) %>% 
+    tss_dataframe <- merged_dataframe %>% group_by(tss_coordinates, strand) %>% summarize(transcript_types=paste(unique(Transcript_novelty), collapse=',')) %>% 
         mutate(tss_category=ifelse(grepl('Known', transcript_types), 
                                 'Known_TSS',
                                 ifelse(grepl('Intergenic', transcript_types), 
@@ -195,33 +223,48 @@ split_tss_types <- function(infiles, outfile) {
     # Get directory
     outdir <- dirname(outfile)
 
-    # Loop
+    # Loop through TSS
     for (tss_class in names(dataframes)) {
-        
-        # Get bed
-        bed_dataframe <- dataframes[[tss_class]] %>% mutate(
-            chr=gsub('chr(.*):.*', '\\1', tss_coordinates),
-            start_int=as.numeric(gsub('.*:(.*)', '\\1', tss_coordinates)),
-            start=format(start_int-251, scientific=FALSE, trim=TRUE), #-1 is actually unnecessary, because BED is 0-based
-            end=format(start_int+250, scientific=FALSE, trim=TRUE),
-            score=0) %>% select(chr, start, end, transcript_types, score, strand)
-    
-        # Add TSS number
-        bed_dataframe$transcript_types <- paste0(tss_class, '_', 1:nrow(bed_dataframe))
 
-        # Subset
-        # nr_rows <- min(nrow(bed_dataframe), 500)
-        # row_idx <- sample(1:nrow(bed_dataframe), nr_rows)
-        # bed_dataframe <- as.data.frame(bed_dataframe)[row_idx,]
+        # Loop through window
+        for (window_size in c(0, as.numeric(gsub('.*_(.*)bp.bed', '\\1', outfile)))) {
+            
+            # Get bed (500bp)
+            bed_dataframe <- dataframes[[tss_class]] %>% mutate(
+                chr=gsub('chr(.*):.*', '\\1', tss_coordinates),
+                start_int=as.numeric(gsub('.*:(.*)', '\\1', tss_coordinates)),
+                start=format(start_int-1-(window_size/2), scientific=FALSE, trim=TRUE),
+                end=format(start_int+(window_size/2), scientific=FALSE, trim=TRUE),
+                score=0) %>% select(chr, start, end, transcript_types, score, strand)
         
-        # Get outfile
-        bed_outfile <- glue('{outdir}/{tss_class}.bed')
+            # Add TSS number
+            bed_dataframe$transcript_types <- paste0(tss_class, '_', 1:nrow(bed_dataframe))
 
-        # Export
-        fwrite(bed_dataframe, bed_outfile, sep='\t', col.names = FALSE)
+            # Get outfile
+            bed_outfile <- ifelse(window_size>0, glue('{outdir}/{tss_class}_{window_size}bp.bed'), glue('{outdir}/{tss_class}.bed'))
+
+            # Export
+            fwrite(bed_dataframe, bed_outfile, sep='\t', col.names = FALSE)
+
+        }
 
     }
 
+}
+
+
+#######################################################
+#######################################################
+########## S8. Gene coverage
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Get gene BED
+#############################################
+
+get_gene_bed <- function(infile, outfile) {
+    
 }
 
 #############################################
@@ -239,14 +282,14 @@ split_gtf <- function(infiles, outfile) {
     # Read GTF
     gtf <- rtracklayer::readGFF(infiles[1])
 
-    # Read abundance
-    abundance_dataframe <- fread(infiles[2]) %>% rename('transcript_id'='annot_transcript_id') %>% mutate(transcript_novelty_v2=ifelse(gene_novelty=='Known', transcript_novelty, gene_novelty)) %>% select(transcript_id, transcript_novelty_v2)
+    # Read classification
+    classification_dataframe <- fread(infiles[2]) %>% select(transcript_id, Transcript_novelty)
 
     # Merge
-    merged_gtf <- gtf %>% left_join(abundance_dataframe, by='transcript_id') %>% replace_na(list(transcript_novelty_v2='Known'))
+    merged_gtf <- gtf %>% left_join(classification_dataframe, by='transcript_id')
 
     # Split
-    gtf_split <- split(merged_gtf, merged_gtf$transcript_novelty_v2)
+    gtf_split <- split(merged_gtf, merged_gtf$Transcript_novelty)
 
     # Get directory
     outdir <- dirname(outfile)
@@ -308,56 +351,56 @@ create_shuffled_gtf <- function(infiles, outfile) {
 
 split_tss <- function(infiles, outfile) {
 
-    # Read GTF
-    gtf <- rtracklayer::readGFF(infiles[1])
+    # # Read GTF
+    # gtf <- rtracklayer::readGFF(infiles[1])
 
-    # Read abundance
-    abundance_dataframe <- fread(infiles[2]) %>% rename('transcript_id'='annot_transcript_id') %>% mutate(transcript_novelty_v2=ifelse(gene_novelty=='Known', transcript_novelty, gene_novelty)) %>% select(transcript_id, gene_novelty, transcript_novelty_v2)
+    # # Read abundance
+    # abundance_dataframe <- fread(infiles[2]) %>% rename('transcript_id'='annot_transcript_id') %>% mutate(transcript_novelty_v2=ifelse(gene_novelty=='Known', transcript_novelty, gene_novelty)) %>% select(transcript_id, gene_novelty, transcript_novelty_v2)
 
-    # Extract TSSs
-    transcript_dataframe <- gtf %>% filter(type=='exon') %>% group_by(transcript_id, strand) %>% summarize(chr=seqid, strand=strand, tss=ifelse(strand=='+', min(start), max(end)), tss_coordinates=paste0('chr', chr, ':', tss)) %>% distinct %>% select(transcript_id, tss_coordinates, strand)
+    # # Extract TSSs
+    # transcript_dataframe <- gtf %>% filter(type=='exon') %>% group_by(transcript_id, strand) %>% summarize(chr=seqid, strand=strand, tss=ifelse(strand=='+', min(start), max(end)), tss_coordinates=paste0('chr', chr, ':', tss)) %>% distinct %>% select(transcript_id, tss_coordinates, strand)
 
-    # Merge
-    merged_dataframe <- transcript_dataframe %>% left_join(abundance_dataframe, by='transcript_id') %>% replace_na(list(gene_novelty='Known', transcript_novelty='Known')) %>% replace_na(list(transcript_novelty_v2='Known'))
-    head(merged_dataframe)
+    # # Merge
+    # merged_dataframe <- transcript_dataframe %>% left_join(abundance_dataframe, by='transcript_id') %>% replace_na(list(gene_novelty='Known', transcript_novelty='Known')) %>% replace_na(list(transcript_novelty_v2='Known'))
+    # head(merged_dataframe)
 
-    # Pivot
-    tss_dataframe <- merged_dataframe %>% group_by(tss_coordinates, strand) %>% summarize(transcript_types=paste(unique(transcript_novelty_v2), collapse=',')) %>% 
-        mutate(tss_category=ifelse(grepl('Known', transcript_types), 
-                                'Known_TSS',
-                                ifelse(grepl('Intergenic', transcript_types), 
-                                        'Intergenic_TSS', 
-                                        ifelse(grepl('Antisense', transcript_types), 
-                                                'Antisense_TSS',
-                                                'Novel_TSS')))) %>% group_by(tss_category)
+    # # Pivot
+    # tss_dataframe <- merged_dataframe %>% group_by(tss_coordinates, strand) %>% summarize(transcript_types=paste(unique(transcript_novelty_v2), collapse=',')) %>% 
+    #     mutate(tss_category=ifelse(grepl('Known', transcript_types), 
+    #                             'Known_TSS',
+    #                             ifelse(grepl('Intergenic', transcript_types), 
+    #                                     'Intergenic_TSS', 
+    #                                     ifelse(grepl('Antisense', transcript_types), 
+    #                                             'Antisense_TSS',
+    #                                             'Novel_TSS')))) %>% group_by(tss_category)
 
-    # Split
-    dataframes <- setNames(tss_dataframe %>% group_split, tss_dataframe %>% group_keys %>% pull(tss_category))
+    # # Split
+    # dataframes <- setNames(tss_dataframe %>% group_split, tss_dataframe %>% group_keys %>% pull(tss_category))
 
-    # Get directory
-    outdir <- dirname(outfile)
+    # # Get directory
+    # outdir <- dirname(outfile)
 
-    # Loop
-    for (tss_class in names(dataframes)) {
+    # # Loop
+    # for (tss_class in names(dataframes)) {
         
-        # Get bed
-        bed_dataframe <- dataframes[[tss_class]] %>% mutate(
-            chr=gsub('chr(.*):.*', '\\1', tss_coordinates),
-            start=as.numeric(gsub('.*:(.*)', '\\1', tss_coordinates))-1, #-1 is actually unnecessary, because BED is 0-based
-            end=start+2, score=0) %>% select(chr, start, end, score, transcript_types, strand)
+    #     # Get bed
+    #     bed_dataframe <- dataframes[[tss_class]] %>% mutate(
+    #         chr=gsub('chr(.*):.*', '\\1', tss_coordinates),
+    #         start=as.numeric(gsub('.*:(.*)', '\\1', tss_coordinates))-1, #-1 is actually unnecessary, because BED is 0-based
+    #         end=start+2, score=0) %>% select(chr, start, end, score, transcript_types, strand)
 
-        # Subset
-        # nr_rows <- min(nrow(bed_dataframe), 500)
-        # row_idx <- sample(1:nrow(bed_dataframe), nr_rows)
-        # bed_dataframe <- as.data.frame(bed_dataframe)[row_idx,]
+    #     # Subset
+    #     # nr_rows <- min(nrow(bed_dataframe), 500)
+    #     # row_idx <- sample(1:nrow(bed_dataframe), nr_rows)
+    #     # bed_dataframe <- as.data.frame(bed_dataframe)[row_idx,]
         
-        # Get outfile
-        bed_outfile <- glue('{outdir}/{tss_class}.bed')
+    #     # Get outfile
+    #     bed_outfile <- glue('{outdir}/{tss_class}.bed')
 
-        # Export
-        fwrite(bed_dataframe, bed_outfile, sep='\t', col.names = FALSE)
+    #     # Export
+    #     fwrite(bed_dataframe, bed_outfile, sep='\t', col.names = FALSE)
 
-    }
+    # }
 
 }
 
